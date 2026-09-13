@@ -1,11 +1,27 @@
-import mysql from 'mysql2';
+import prisma from "./prisma.js";
 
-const DB = mysql.createPool({
-  connectionLimit: 10,
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'password',
-  database: process.env.DB_NAME || 'backup_ecommerce'
+const toPostgres = (sql, values) => ({
+    sql: sql
+        .replace(/\bIFNULL\s*\(/gi, "COALESCE(")
+        .replace(/\bNOW\s*\(\s*\)/gi, "CURRENT_TIMESTAMP")
+        .replace(/\?/g, () => `$${values.shift()}`),
+    values
 });
+
+const query = async (sql, parameters = []) => {
+    const values = parameters.map((value) => value);
+    const command = sql.trim().split(/\s+/)[0].toUpperCase();
+    const bound = toPostgres(sql, values.map((_, index) => index + 1));
+    if (command === "SELECT" || command === "WITH") {
+        return [await prisma.$queryRawUnsafe(bound.sql, ...values)];
+    }
+    if (command === "INSERT") {
+        const rows = await prisma.$queryRawUnsafe(`${bound.sql.trim().replace(/;$/, "")} RETURNING id`, ...values);
+        return [{ insertId: rows[0]?.id }];
+    }
+    return [{ affectedRows: await prisma.$executeRawUnsafe(bound.sql, ...values) }];
+};
+
+const DB = { promise: () => ({ query }) };
 
 export default DB;

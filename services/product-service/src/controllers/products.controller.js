@@ -224,28 +224,39 @@ const getAllProducts = async (req, res) => {
 
     /* 1. Variant IDs (Ordered DESC) */
     (
-        SELECT CONCAT('[', GROUP_CONCAT(pv.id ORDER BY pv.id DESC), ']')
+        SELECT COALESCE((SELECT json_agg(pv.id ORDER BY pv.id DESC)::text
+                         FROM product_variants pv
+                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
         FROM product_variants pv 
         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
     ) AS variant_ids,
 
     /* 2. Sizes (Ordered DESC by variant ID to preserve index mapping) */
     (
-        SELECT CONCAT('[', GROUP_CONCAT(CONCAT('"', pv.sizes, '"') ORDER BY pv.id DESC), ']')
+        SELECT COALESCE((SELECT json_agg(pv.sizes ORDER BY pv.id DESC)::text
+                         FROM product_variants pv
+                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
         FROM product_variants pv 
         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
     ) AS sizes,
 
     /* 3. Colors (Ordered DESC by variant ID to preserve index mapping) */
     (
-        SELECT CONCAT('[', GROUP_CONCAT(CONCAT('"', pv.colors, '"') ORDER BY pv.id DESC), ']')
+        SELECT COALESCE((SELECT json_agg(pv.colors ORDER BY pv.id DESC)::text
+                         FROM product_variants pv
+                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
         FROM product_variants pv 
         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
     ) AS colors,
 
     /* 4. Images Object (Ordered DESC by variant ID) */
     (
-        SELECT CONCAT('{', GROUP_CONCAT(CONCAT('"', pv.colors, '":"', iv.image_url, '"') ORDER BY pv.id DESC), '}')
+        SELECT COALESCE((SELECT json_object_agg(pv.colors, iv.image_url)::text
+                         FROM product_variants pv
+                         JOIN variant_images iv ON iv.product_variant_id = pv.id
+                         WHERE pv.product_id = p.id
+                           AND pv.deleted_at IS NULL
+                           AND iv.deleted_at IS NULL), '{}')
         FROM product_variants pv
         JOIN variant_images iv ON iv.product_variant_id = pv.id
         WHERE pv.product_id = p.id 
@@ -255,14 +266,18 @@ const getAllProducts = async (req, res) => {
 
     /* 5. Variant Stocks (Ordered DESC) */
     (
-        SELECT CONCAT('[', GROUP_CONCAT(pv.stock_quantity ORDER BY pv.id DESC), ']')
+        SELECT COALESCE((SELECT json_agg(pv.stock_quantity ORDER BY pv.id DESC)::text
+                         FROM product_variants pv
+                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
         FROM product_variants pv 
         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
     ) AS variant_stocks,
 
     /* 6. Variant Prices (Ordered DESC) */
     (
-        SELECT CONCAT('[', GROUP_CONCAT(pv.price ORDER BY pv.id DESC), ']')
+        SELECT COALESCE((SELECT json_agg(pv.price ORDER BY pv.id DESC)::text
+                         FROM product_variants pv
+                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
         FROM product_variants pv 
         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
     ) AS variant_prices
@@ -473,22 +488,31 @@ const getProductById = async (req, res) => {
                 b.brand_name,
                 b.logo AS brand_logo,
                 (
-              SELECT IFNULL(SUM(pv.stock_quantity), 0)
+              SELECT COALESCE(SUM(pv.stock_quantity), 0)
               FROM product_variants pv 
                WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
                 ) AS quantity,
                 (
-                    SELECT CONCAT('[', GROUP_CONCAT(DISTINCT CONCAT('"', pv.sizes, '"')), ']')
+                    SELECT COALESCE((SELECT json_agg(DISTINCT pv.sizes)::text
+                                     FROM product_variants pv
+                                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
                     FROM product_variants pv 
                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
                 ) AS sizes,
                 (
-                    SELECT CONCAT('[', GROUP_CONCAT(DISTINCT CONCAT('"', pv.colors, '"')), ']')
+                    SELECT COALESCE((SELECT json_agg(DISTINCT pv.colors)::text
+                                     FROM product_variants pv
+                                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
                     FROM product_variants pv 
                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
                 ) AS colors,
                 (
-                    SELECT CONCAT('{', GROUP_CONCAT(DISTINCT CONCAT('"', pv.colors, '":"', iv.image_url, '"')), '}')
+                    SELECT COALESCE((SELECT json_object_agg(pv.colors, iv.image_url)::text
+                                     FROM product_variants pv
+                                     JOIN variant_images iv ON iv.product_variant_id = pv.id
+                                     WHERE pv.product_id = p.id
+                                       AND pv.deleted_at IS NULL
+                                       AND iv.deleted_at IS NULL), '{}')
                     FROM product_variants pv
                     JOIN variant_images iv ON iv.product_variant_id = pv.id
                     WHERE pv.product_id = p.id 
