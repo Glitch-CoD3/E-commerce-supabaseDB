@@ -2,15 +2,17 @@ import express from "express";
 
 import {
     createProduct,
-    getAllProducts,
-    getProductById,
-    getProductBySlug,
     updateProduct,
     updateProductStatus,
     deleteProduct,
-    getProductsByCategoryId,
     getAllDeletedProducts
 } from "../controllers/products.controller.js";
+import {
+    getAllProducts,
+    getProductById,
+    getProductBySlug,
+    getProductsByCategoryId
+} from "../controllers/prisma-fetch.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { ROLES } from "../constants.js";

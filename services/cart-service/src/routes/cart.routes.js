@@ -7,6 +7,10 @@ import {
     removeCartItem,
     clearCart
 } from "../controllers/cart.controller.js";
+import {
+    getCart as getCartWithPrisma,
+    getCartItemById as getCartItemByIdWithPrisma
+} from "../controllers/prisma-fetch.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { allowRoles } from "../middlewares/authorize.middleware.js";
@@ -42,14 +46,14 @@ router.post("/", addToCart);
  * @description Retrieve all items in the authenticated user's cart.
  * @access Private (User, Admin)
  */
-router.get("/", getCart);
+router.get("/", getCartWithPrisma);
 
 /**
  * @method GET /api/v1/cart/:id
  * @description Retrieve a specific cart item by its ID.
  * @access Private (User, Admin)
  */
-router.get("/:id", getCartItemById);
+router.get("/:id", getCartItemByIdWithPrisma);
 
 /**
  * @method PATCH /api/v1/cart/:id

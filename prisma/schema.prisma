@@ -3,6 +3,293 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+enum CategoryStatus {
+  active
+  inactive
+}
+
+enum ProductStatus {
+  active
+  inactive
+  discontinued
+}
+
+enum UserStatus {
+  active
+  inactive
+  blocked
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  processing
+  shipped
+  delivered
+  cancelled
+  returned
+}
+
+enum OtpType {
+  email_verification
+  reset_password
+}
+
+enum ProductSize {
+  M
+  L
+  XL
+  XXL
+  X3L @map("3XL")
+}
+
+model Brand {
+  id        BigInt    @id @default(autoincrement())
+  brandName String    @unique @map("brand_name") @db.VarChar(100)
+  logo      String?   @db.VarChar(255)
+  createdAt DateTime  @default(now()) @map("created_at")
+  products  Product[]
+
+  @@map("brands")
+}
+
+model Category {
+  id               BigInt         @id @default(autoincrement())
+  categoryName     String         @map("category_name") @db.VarChar(150)
+  urlSlug          String         @unique @map("url_slug") @db.VarChar(180)
+  parentCategoryId BigInt?        @map("parent_category_id")
+  status           CategoryStatus @default(active)
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  deletedAt        DateTime?      @map("deleted_at")
+  parent           Category?      @relation("CategoryTree", fields: [parentCategoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children         Category[]     @relation("CategoryTree")
+  products         Product[]
+
+  @@index([parentCategoryId])
+  @@map("categories")
+}
+
+model Product {
+  id               BigInt           @id @default(autoincrement())
+  categoryId       BigInt           @map("category_id")
+  brandId          BigInt?          @map("brand_id")
+  productName      String           @map("product_name") @db.VarChar(255)
+  urlSlug          String           @unique @map("url_slug") @db.VarChar(255)
+  description      String?          @db.Text
+  shortDescription String?          @map("short_description") @db.VarChar(1000)
+  price            Decimal          @db.Decimal(10, 2)
+  stockQuantity    Int              @default(0) @map("stock_quantity")
+  status           ProductStatus
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  deletedAt        DateTime?        @map("deleted_at")
+  category         Category         @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  brand            Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull, onUpdate: SetNull)
+  variants         ProductVariant[]
+  cartItems        Cart[]
+  orderItems       OrderItem[]
+
+  @@index([categoryId])
+  @@index([brandId])
+  @@map("products")
+}
+
+model ProductVariant {
+  id            BigInt         @id @default(autoincrement())
+  productId     BigInt         @map("product_id")
+  colors        String?        @db.VarChar(100)
+  sizes         ProductSize?
+  price         Decimal        @db.Decimal(10, 2)
+  stockQuantity Int            @default(0) @map("stock_quantity")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  deletedAt     DateTime?      @map("deleted_at")
+  product       Product        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  images        VariantImage[]
+  cartItems     Cart[]
+  orderItems    OrderItem[]
+
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model VariantImage {
+  id               BigInt         @id @default(autoincrement())
+  productVariantId BigInt         @map("product_variant_id")
+  imageUrl         String         @map("image_url") @db.VarChar(500)
+  sortOrder        Int            @default(1) @map("sort_order")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  deletedAt        DateTime?      @map("deleted_at")
+  variant          ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([productVariantId])
+  @@map("variant_images")
+}
+
+model UserRole {
+  id        BigInt    @id @default(autoincrement())
+  roleName  String    @unique @map("role_name") @db.VarChar(100)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  users     User[]
+
+  @@map("user_roles")
+}
+
+model User {
+  id           BigInt            @id @default(autoincrement())
+  roleId       BigInt            @default(2) @map("role_id")
+  fullName     String            @map("full_name") @db.VarChar(200)
+  email        String            @unique @db.VarChar(255)
+  passwordHash String            @map("password_hash") @db.VarChar(255)
+  phoneNumber  String?           @map("phone_number") @db.VarChar(20)
+  status       UserStatus        @default(inactive)
+  isVerified   Boolean           @default(false) @map("is_verified")
+  lastLoginAt  DateTime?         @map("last_login_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  deletedAt    DateTime?         @map("deleted_at")
+  role         UserRole          @relation(fields: [roleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  otps         Otp[]
+  sessions     UserSession[]
+  addresses    ShippingAddress[]
+  carts        Cart[]
+  orders       Order[]
+
+  @@index([roleId])
+  @@map("users")
+}
+
+model Otp {
+  id          BigInt   @id @default(autoincrement())
+  userId      BigInt   @map("user_id")
+  email       String   @db.VarChar(512)
+  otpCodeHash String   @map("otp_code_hash") @db.VarChar(300)
+  otpType     OtpType  @map("otp_type")
+  expiresAt   DateTime @default(now()) @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([otpType])
+  @@map("otps")
+}
+
+model UserSession {
+  id               BigInt   @id @default(autoincrement())
+  userId           BigInt   @map("user_id")
+  roleId           String   @map("role_id") @db.VarChar(20)
+  refreshTokenHash String   @map("refresh_token_hash") @db.VarChar(512)
+  revoked          Boolean  @default(false)
+  ipAddress        String?  @map("ip_address") @db.VarChar(45)
+  userAgent        String?  @map("user_agent") @db.Text
+  expiresAt        DateTime @default(now()) @map("expires_at")
+  lastActivityAt   DateTime @default(now()) @map("last_activity_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  user             User     @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model ShippingAddress {
+  id          BigInt                 @id @default(autoincrement())
+  userId      BigInt                 @map("user_id")
+  fullAddress String                 @map("full_address") @db.Text
+  phoneNumber String                 @map("phone_number") @db.VarChar(20)
+  state       String                 @db.VarChar(100)
+  city        String                 @db.VarChar(100)
+  zipCode     String                 @map("zip_code") @db.VarChar(20)
+  isDefault   Boolean                @default(false) @map("is_default")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  user        User                   @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  orderCopies OrderShippingAddress[]
+
+  @@index([userId])
+  @@map("shipping_addresses")
+}
+
+model Cart {
+  id               BigInt          @id @default(autoincrement())
+  userId           BigInt          @map("user_id")
+  productVariantId BigInt?         @map("product_variant_id")
+  productId        BigInt?         @map("product_id")
+  quantity         Int             @default(1)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  user             User            @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variant          ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product          Product?        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([userId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@map("carts")
+}
+
+model Order {
+  id                BigInt                 @id @default(autoincrement())
+  orderNumber       String                 @unique @map("order_number") @db.VarChar(50)
+  userId            BigInt                 @map("user_id")
+  totalAmount       Decimal                @default(0) @map("total_amount") @db.Decimal(10, 2)
+  discountAmount    Decimal                @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  shippingCharge    Decimal                @default(0) @map("shipping_charge") @db.Decimal(10, 2)
+  netAmount         Decimal                @default(0) @map("net_amount") @db.Decimal(10, 2)
+  status            OrderStatus            @default(confirmed)
+  paymentStatus     String                 @default("UNPAID") @map("payment_status") @db.VarChar(100)
+  createdAt         DateTime               @default(now()) @map("created_at")
+  updatedAt         DateTime               @updatedAt @map("updated_at")
+  user              User                   @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  items             OrderItem[]
+  shippingAddresses OrderShippingAddress[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id               BigInt          @id @default(autoincrement())
+  orderId          BigInt          @map("order_id")
+  productName      String          @map("product_name") @db.VarChar(255)
+  productId        BigInt          @map("product_id")
+  productVariantId BigInt?         @map("product_variant_id")
+  price            Decimal         @db.Decimal(10, 2)
+  quantity         Int
+  totalAmount      Decimal         @map("total_amount") @db.Decimal(10, 2)
+  createdAt        DateTime        @default(now()) @map("created_at")
+  order            Order           @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product          Product         @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variant          ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@map("order_items")
+}
+
+model OrderShippingAddress {
+  id                BigInt           @id @default(autoincrement())
+  orderId           BigInt           @map("order_id")
+  shippingAddressId BigInt?          @map("shipping_address_id")
+  fullAddress       String           @map("full_address") @db.Text
+  phoneNumber       String           @map("phone_number") @db.VarChar(15)
+  state             String           @db.VarChar(100)
+  city              String           @db.VarChar(100)
+  zipCode           String           @map("zip_code") @db.VarChar(20)
+  createdAt         DateTime         @default(now()) @map("created_at")
+  order             Order            @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  shippingAddress   ShippingAddress? @relation(fields: [shippingAddressId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([shippingAddressId])
+  @@map("order_shipping_addresses")
 }
