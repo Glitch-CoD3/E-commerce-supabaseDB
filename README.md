@@ -1,10 +1,11 @@
 ## Prisma
 
-Prisma is configured at the repository root for the shared PostgreSQL database. The schema mirrors
+Prisma is configured at the repository root for the shared Supabase PostgreSQL database. The schema mirrors
 the `backup_ecommerce.sql` tables and maps PostgreSQL-safe types, relations, indexes, and soft-delete
 columns. Each service has its own Prisma client entry point under `src/config/prisma.js`.
 
-1. Copy `.env.example` to `.env` and update `DATABASE_URL`.
+1. Copy `.env.example` to `.env` and replace `[YOUR-PASSWORD]` with the Supabase database password.
+   The direct connection is `db.kxfnqtvghasbzdgaxtgp.supabase.co:5432`.
 2. Install dependencies with `npm install`.
 3. Generate the Prisma Client with `npm run prisma:generate`.
 4. Apply the schema to PostgreSQL with `npm run prisma:migrate -- --name init_postgresql`.
