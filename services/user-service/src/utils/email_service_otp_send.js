@@ -1,45 +1,65 @@
-import nodemailer from 'nodemailer';
+import nodemailer from "nodemailer";
 
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    type: 'OAuth2',
-    user: process.env.GOOGLE_USER,
-    clientId: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-  },
-});
-
-// Verify the connection configuration
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('Error connecting to email server:', error);
-  } else {
-    console.log('📨 Email server is ready to send messages');
+const getRequiredEnv = (name) => {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required email configuration: ${name}`);
   }
-});
-
-
-const sendEmail = async (to, subject, text, html) => {
-  try {
-    const info = await transporter.sendMail({
-      from: `"TRENDLAMA" <${process.env.GOOGLE_USER}>`, // sender address
-      to, // list of receivers
-      subject, // Subject line
-      text, // plain text body
-      html, // html body
-    });
-
-    // console.log('Message sent: %s', info.messageId);
-    // console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
-  } catch (error) {
-    console.error('Error sending email:', error);
-  }
+  return value;
 };
 
+const createTransporter = () => {
+  const port = Number.parseInt(process.env.SMTP_PORT || "465", 10);
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new Error("SMTP_PORT must be a positive integer");
+  }
+
+  const user = getRequiredEnv("SMTP_USER");
+  const appPassword = getRequiredEnv("SMTP_APP_PASSWORD").replace(/\s/g, "");
+
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST?.trim() || "smtp.gmail.com",
+    port,
+    secure: process.env.SMTP_SECURE
+      ? process.env.SMTP_SECURE.toLowerCase() === "true"
+      : port === 465,
+    auth: {
+      user,
+      pass: appPassword,
+    },
+  });
+};
+
+let transporter;
+
+const getTransporter = () => {
+  if (!transporter) {
+    transporter = createTransporter();
+  }
+  return transporter;
+};
+
+const verifyEmailTransport = async () => {
+  await getTransporter().verify();
+  console.log("Email server is ready to send messages");
+};
+
+const sendEmail = async (to, subject, text, html) => {
+  const sender = process.env.EMAIL_FROM?.trim() || getRequiredEnv("SMTP_USER");
+  const info = await getTransporter().sendMail({
+    from: `"TRENDLAMA" <${sender}>`,
+    to,
+    subject,
+    text,
+    html,
+  });
+
+  console.log(`Email sent: ${info.messageId}`);
+  return info;
+};
 
 export {
-  transporter,
+  getTransporter,
   sendEmail,
+  verifyEmailTransport,
 };
