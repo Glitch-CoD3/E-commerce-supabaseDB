@@ -48,7 +48,7 @@ const createCategory = async (req, res) => {
         // Check slug uniqueness
         const slugExists = await prisma.category.findFirst({
             where: {
-                url_slug: slug
+                urlSlug: slug
             },
             select: {
                 id: true
@@ -73,6 +73,7 @@ const createCategory = async (req, res) => {
                 }
             });
 
+
             if (!parent) {
                 return res.status(404).json({
                     success: false,
@@ -84,9 +85,9 @@ const createCategory = async (req, res) => {
         // Create category
         const createdCategory = await prisma.category.create({
             data: {
-                category_name,
-                url_slug: slug,
-                parent_category_id: parent_category_id
+                categoryName:category_name,
+                urlSlug: slug,
+                parentCategoryId: parent_category_id
                     ? BigInt(parent_category_id)
                     : null,
                 status
@@ -96,7 +97,7 @@ const createCategory = async (req, res) => {
         // Get total categories
         const totalCategories = await prisma.category.count({
             where: {
-                deleted_at: null
+                deletedAt: null
             }
         });
 
@@ -141,7 +142,7 @@ const getAllCategories = async (req, res) => {
     try {
         const categories = await prisma.category.findMany({
             where: {
-                deleted_at: null
+                deletedAt: null
             },
             orderBy: {
                 id: "desc"
@@ -181,7 +182,7 @@ const getCategoryById = async (req, res) => {
         const category = await prisma.category.findFirst({
             where: {
                 id: BigInt(id),
-                deleted_at: null
+                deletedAt: null
             }
         });
 
@@ -193,10 +194,10 @@ const getCategoryById = async (req, res) => {
         }
 
         const {
-            deleted_at,
-            updated_at,
+            deletedAt,
+            updatedAt,
             sort_order,
-            created_at,
+            createdAt,
             ...categoryData
         } = category;
 
@@ -305,7 +306,7 @@ const updateCategory = async (req, res) => {
         const existingCategory = await prisma.category.findFirst({
             where: {
                 id: BigInt(id),
-                deleted_at: null
+                deletedAt: null
             }
         });
 
@@ -319,7 +320,7 @@ const updateCategory = async (req, res) => {
         // Check slug uniqueness
         const slugExists = await prisma.category.findFirst({
             where: {
-                url_slug,
+                urlSlug:url_slug,
                 NOT: {
                     id: BigInt(id)
                 }
@@ -349,7 +350,7 @@ const updateCategory = async (req, res) => {
             const parent = await prisma.category.findFirst({
                 where: {
                     id: BigInt(parent_category_id),
-                    deleted_at: null
+                    deletedAt: null
                 },
                 select: {
                     id: true
@@ -370,9 +371,9 @@ const updateCategory = async (req, res) => {
                 id: BigInt(id)
             },
             data: {
-                category_name,
-                url_slug,
-                parent_category_id: parent_category_id
+                categoryName: category_name,
+                urlSlug:url_slug,
+                parentCategoryId: parent_category_id
                     ? BigInt(parent_category_id)
                     : null,
                 status
@@ -413,7 +414,7 @@ const deleteCategory = async (req, res) => {
         const existingCategory = await prisma.category.findFirst({
             where: {
                 id: BigInt(id),
-                deleted_at: null
+                deletedAt: null
             },
             select: {
                 id: true
@@ -433,7 +434,7 @@ const deleteCategory = async (req, res) => {
                 id: BigInt(id)
             },
             data: {
-                deleted_at: new Date()
+                deletedAt: new Date()
             }
         });
 
@@ -466,8 +467,8 @@ const getParentCategories = async (req, res) => {
     try {
         const parents = await prisma.category.findMany({
             where: {
-                parent_category_id: null,
-                deleted_at: null
+                parentCategoryId: null,
+                deletedAt: null
             },
             orderBy: {
                 id: "desc"
@@ -508,7 +509,7 @@ const getChildCategories = async (req, res) => {
         const parent = await prisma.category.findFirst({
             where: {
                 id: BigInt(parentId),
-                deleted_at: null
+                deletedAt: null
             },
             select: {
                 id: true
@@ -524,8 +525,8 @@ const getChildCategories = async (req, res) => {
 
         const children = await prisma.category.findMany({
             where: {
-                parent_category_id: BigInt(parentId),
-                deleted_at: null
+                parentCategoryId: BigInt(parentId),
+                deletedAt: null
             },
             orderBy: {
                 id: "desc"
@@ -562,7 +563,7 @@ const getAllDeletedCategories = async (req, res) => {
     try {
         const categories = await prisma.category.findMany({
             where: {
-                deleted_at: {
+                deletedAt: {
                     not: null
                 }
             },

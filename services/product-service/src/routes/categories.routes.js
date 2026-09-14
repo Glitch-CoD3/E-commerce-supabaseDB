@@ -11,7 +11,7 @@ import {
     getAllDeletedCategories
 } from "../controllers/categories.controller.js";
 
-import { verifyJWT } from '../middlewares/auth.middleware.js'
+import { verifyJWT } from "../middlewares/auth.middleware.js"
 import { ROLES } from "../constants.js";
 import { allowRoles } from "../middlewares/authorize.middleware.js";
 
