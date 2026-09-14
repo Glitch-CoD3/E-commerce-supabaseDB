@@ -4,7 +4,7 @@ import { generate_access_token, generate_refresh_token } from "../utils/token_ge
 import { hashPassword, comparePassword } from "../utils/hash_password.js";
 // import { sendEmail } from "../utils/email_service_otp_send.js";
 import { generateOTP, getOtpHtml } from "../utils/generate_otp.js";
-import { send_smtp_Mail  } from "../utils/send_otp_smtp.js"
+import { send_smtp_Mail } from "../utils/send_otp_smtp.js"
 
 const userResponse = (user) => ({
     id: Number(user.id),
@@ -53,14 +53,34 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
-        if (!email || !password) return res.status(400).json({ message: "Email and password are required." });
 
-        const user = await prisma.user.findUnique({ where: { email } });
-        if (!user) return res.status(400).json({ message: "User not registered." });
-        if (!await comparePassword(password, user.passwordHash)) {
-            return res.status(400).json({ message: "Invalid credentials." });
+        if (!email || !password) {
+            return res.status(400).json({
+                message: "Email and password are required."
+            });
         }
-        if (!user.isVerified) return res.status(400).json({ message: "Please verify your email first." });
+
+        const user = await prisma.user.findUnique({
+            where: { email }
+        });
+
+        if (!user) {
+            return res.status(400).json({
+                message: "User not registered."
+            });
+        }
+
+        if (!await comparePassword(password, user.passwordHash)) {
+            return res.status(400).json({
+                message: "Invalid credentials."
+            });
+        }
+
+        if (!user.isVerified) {
+            return res.status(400).json({
+                message: "Please verify your email first."
+            });
+        }
 
         const session = await prisma.userSession.create({
             data: {
@@ -71,218 +91,682 @@ const loginUser = async (req, res) => {
                 userAgent: req.headers["user-agent"]
             }
         });
+
         const sessionId = Number(session.id);
-        const access_token = generate_access_token({
-            id: Number(user.id), role_id: Number(user.roleId),
-            full_name: user.fullName, email: user.email
-        });
-        const refresh_token = generate_refresh_token({
-            id: Number(user.id), role_id: Number(user.roleId), session_id: sessionId
-        });
+
+        const access_token = generate_access_token(
+            user.id,
+            user.fullName,
+            user.email,
+            user.roleId
+        );
+
+        const refresh_token = generate_refresh_token(
+            user.id,
+            user.fullName,
+            user.email,
+            user.roleId,
+            sessionId
+        );
+
         await prisma.userSession.update({
-            where: { id: session.id },
-            data: { refreshTokenHash: await bcrypt.hash(refresh_token, 10) }
+            where: {
+                id: sessionId
+            },
+            data: {
+                refreshTokenHash: await bcrypt.hash(refresh_token, 10)
+            }
         });
 
         res.cookie("refreshToken", refresh_token, {
-            httpOnly: true, secure: true, sameSite: "Strict", maxAge: 7 * 24 * 60 * 60 * 1000
+            httpOnly: true,
+            secure: true,
+            sameSite: "Strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000
         });
+
         return res.status(200).json({
-            message: "Login successful.", session_id: sessionId, accessToken: access_token,
+            message: "Login successful.",
+            session_id: sessionId,
+            accessToken: access_token,
             user: userResponse(user)
         });
+
     } catch (error) {
         console.error(error);
-        return res.status(500).json({ message: "Internal server error." });
+
+        return res.status(500).json({
+            message: "Internal server error."
+        });
     }
 };
+
 
 const OTP_verification = async (req, res) => {
     try {
         const { email, otp } = req.body;
-        if (!email || !otp) return res.status(400).json({ message: "Email and OTP are required!" });
-        const record = await prisma.otp.findFirst({ where: { email, otpType: "email_verification" } });
-        if (!record) return res.status(400).json({ message: "Invalid OTP" });
-        if (record.expiresAt < new Date()) return res.status(400).json({ message: "OTP has expired" });
-        if (!await bcrypt.compare(otp, record.otpCodeHash)) return res.status(400).json({ message: "Invalid OTP" });
+
+        if (!email || !otp) {
+            return res.status(400).json({
+                success: false,
+                message: "Email and OTP are required."
+            });
+        }
+
+        const otpRecord = await prisma.otp.findFirst({
+            where: {
+                email,
+                otpType: "email_verification"
+            }
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid OTP."
+            });
+        }
+
+        if (otpRecord.expiresAt < new Date()) {
+            return res.status(400).json({
+                success: false,
+                message: "OTP has expired."
+            });
+        }
+
+        const isValidOTP = await bcrypt.compare(
+            otp,
+            otpRecord.otpCodeHash
+        );
+
+        if (!isValidOTP) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid OTP."
+            });
+        }
 
         await prisma.$transaction([
-            prisma.user.update({ where: { email }, data: { isVerified: true, status: "active" } }),
-            prisma.otp.deleteMany({ where: { email } })
+            prisma.user.update({
+                where: { email },
+                data: {
+                    isVerified: true,
+                    status: "active"
+                }
+            }),
+
+            prisma.otp.deleteMany({
+                where: {
+                    email,
+                    otpType: "email_verification"
+                }
+            })
         ]);
-        return res.status(200).json({ success: true, message: "Email verified successfully" });
+
+        return res.status(200).json({
+            success: true,
+            message: "Email verified successfully."
+        });
+
     } catch (error) {
-        console.error("Server Error From Verification:", error);
-        return res.status(500).json({ success: false, message: "Internal Server Error" });
+        console.error("OTP Verification Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const resend_otp = async (req, res) => {
     try {
         const { email } = req.body;
-        if (!email) return res.status(400).json({ message: "Email is required." });
-        const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-        if (!user) return res.status(404).json({ message: "User not found." });
-        await prisma.otp.deleteMany({ where: { email, otpType: "email_verification" } });
-        const otp = generateOTP();
-        await prisma.otp.create({
-            data: {
-                userId: user.id, email, otpCodeHash: await bcrypt.hash(otp, 10),
-                otpType: "email_verification", expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: "Email is required."
+            });
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true }
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found."
+            });
+        }
+
+        await prisma.otp.deleteMany({
+            where: {
+                email,
+                otpType: "email_verification"
             }
         });
-        await sendEmail(email, "Your OTP Code", `Your OTP code is: ${otp}`, getOtpHtml(otp));
-        return res.status(200).json({ success: true, message: "A new verification OTP has been sent." });
+
+        const otp = generateOTP();
+
+        const otpHash = await bcrypt.hash(otp, 10);
+
+        await prisma.otp.create({
+            data: {
+                userId: user.id,
+                email,
+                otpCodeHash: otpHash,
+                otpType: "email_verification",
+                expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+            }
+        });
+
+        await sendEmail(
+            email,
+            "Your OTP Code",
+            `Your OTP code is: ${otp}`,
+            getOtpHtml(otp)
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "A new verification OTP has been sent."
+        });
+
     } catch (error) {
         console.error("Resend OTP Error:", error);
-        return res.status(500).json({ message: "Server Error" });
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const verify_resend_OTP = async (req, res) => {
     try {
         const { email, otp } = req.body;
-        if (!email || !otp) return res.status(400).json({ message: "Email and OTP are required." });
-        const otpData = await prisma.otp.findFirst({ where: { email, otpType: "email_verification" } });
-        if (!otpData) return res.status(400).json({ message: "OTP not found." });
-        if (new Date() > otpData.expiresAt) return res.status(400).json({ message: "OTP expired." });
-        if (!await bcrypt.compare(otp, otpData.otpCodeHash)) return res.status(400).json({ message: "Invalid OTP." });
+
+        if (!email || !otp) {
+            return res.status(400).json({
+                success: false,
+                message: "Email and OTP are required."
+            });
+        }
+
+        const otpRecord = await prisma.otp.findFirst({
+            where: {
+                email,
+                otpType: "email_verification"
+            }
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({
+                success: false,
+                message: "OTP not found."
+            });
+        }
+
+        if (otpRecord.expiresAt < new Date()) {
+            return res.status(400).json({
+                success: false,
+                message: "OTP has expired."
+            });
+        }
+
+        const isValidOTP = await bcrypt.compare(
+            otp,
+            otpRecord.otpCodeHash
+        );
+
+        if (!isValidOTP) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid OTP."
+            });
+        }
+
         await prisma.$transaction([
             prisma.user.updateMany({
-                where: { email, isVerified: false, status: "inactive" },
-                data: { isVerified: true, status: "active" }
+                where: {
+                    email,
+                    isVerified: false,
+                    status: "inactive"
+                },
+                data: {
+                    isVerified: true,
+                    status: "active"
+                }
             }),
-            prisma.otp.delete({ where: { id: otpData.id } })
+
+            prisma.otp.delete({
+                where: {
+                    id: otpRecord.id
+                }
+            })
         ]);
-        return res.status(200).json({ success: true, message: "OTP verified." });
+
+        return res.status(200).json({
+            success: true,
+            message: "OTP verified successfully."
+        });
+
     } catch (error) {
-        console.error("Verify Reset OTP Error:", error);
-        return res.status(500).json({ message: "Server Error" });
+        console.error("Verify Resend OTP Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const log_out = async (req, res) => {
     try {
-        const session_id = req.user.session_id;
-        const session = await prisma.userSession.findFirst({ where: { id: BigInt(session_id), revoked: false } });
-        if (!session) return res.status(401).json({ message: "Session not found or revoked" });
-        await prisma.userSession.update({ where: { id: session.id }, data: { revoked: true } });
+        const sessionId = req.user?.session_id;
+
+        if (!sessionId) {
+            return res.status(401).json({
+                success: false,
+                message: "Session information is missing."
+            });
+        }
+
+        const session = await prisma.userSession.findFirst({
+            where: {
+                id: BigInt(sessionId),
+                revoked: false
+            }
+        });
+
+        if (!session) {
+            return res.status(401).json({
+                success: false,
+                message: "Session not found or already revoked."
+            });
+        }
+
+        await prisma.userSession.update({
+            where: {
+                id: session.id
+            },
+            data: {
+                revoked: true
+            }
+        });
+
         res.clearCookie("refreshToken");
-        return res.status(200).json({ session_id, success: "success", message: "Logout Successfully" });
+
+        return res.status(200).json({
+            success: true,
+            session_id: session.id.toString(),
+            message: "Logout successful."
+        });
+
     } catch (error) {
-        console.error("Logout error ", error);
-        return res.status(401).json({ message: "Unauthorized for logout" });
+        console.error("Logout Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
 
+
 const logout_all_devices = async (req, res) => {
     try {
-        const user_id = req.user?.id;
-        if (!user_id) return res.status(401).json({ message: "Unauthorized user request" });
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized user request."
+            });
+        }
+
         const result = await prisma.userSession.updateMany({
-            where: { userId: BigInt(user_id), revoked: false }, data: { revoked: true }
+            where: {
+                userId: BigInt(userId),
+                revoked: false
+            },
+            data: {
+                revoked: true
+            }
         });
-        if (result.count === 0) return res.status(404).json({ message: "No active sessions found" });
+
+        if (result.count === 0) {
+            return res.status(404).json({
+                success: false,
+                message: "No active sessions found."
+            });
+        }
+
         res.clearCookie("refreshToken");
-        return res.status(200).json({ success: true, message: "Logged out from all devices successfully" });
+
+        return res.status(200).json({
+            success: true,
+            message: "Logged out from all devices successfully."
+        });
+
     } catch (error) {
-        console.error("Logout all devices error:", error);
-        return res.status(500).json({ message: "Internal server error" });
+        console.error("Logout All Devices Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const refresh = async (req, res) => {
     try {
         const user = req.user;
-        const session = await prisma.userSession.findFirst({ where: { userId: BigInt(user.id), revoked: false } });
-        if (!session) return res.status(401).json({ message: "Invalid token" });
-        const refresh_token = generate_refresh_token(user.id, user.name, user.email, user.role_id);
+
+        if (!user?.id || !user?.session_id) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token."
+            });
+        }
+
+        const session = await prisma.userSession.findFirst({
+            where: {
+                id: BigInt(user.session_id),
+                userId: BigInt(user.id),
+                revoked: false
+            }
+        });
+
+        if (!session) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid or revoked session."
+            });
+        }
+
+        const refreshToken = generate_refresh_token(
+            user.id,
+            user.name,
+            user.email,
+            user.role_id,
+            session.id
+        );
+
+        const accessToken = generate_access_token(
+            user.id,
+            user.name,
+            user.email,
+            user.role_id
+        );
+
         await prisma.userSession.update({
-            where: { id: session.id }, data: { refreshTokenHash: await bcrypt.hash(refresh_token, 10) }
+            where: {
+                id: session.id
+            },
+            data: {
+                refreshTokenHash: await bcrypt.hash(refreshToken, 10),
+                lastActivityAt: new Date()
+            }
         });
-        const access_token = generate_access_token(user.id, user.name, user.email, user.role_id);
-        res.cookie("refreshToken", refresh_token, {
-            httpOnly: true, secure: false, sameSite: "Strict", maxAge: 15 * 60 * 1000
+
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: false,
+            sameSite: "Strict",
+            maxAge: 7 * 24 * 60 * 60 * 1000
         });
-        return res.status(201).json({ session_id: Number(session.id), message: "Tokens are refreshed", access_token });
+
+        return res.status(200).json({
+            success: true,
+            session_id: session.id.toString(),
+            message: "Tokens refreshed successfully.",
+            access_token: accessToken
+        });
+
     } catch (error) {
-        console.error("Error refreshing token:", error);
-        return res.status(500).json({ message: "Internal server error from refresh" });
+        console.error("Refresh Token Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
 
+
 const get_me = async (req, res) => {
     try {
-        const user_id = req.user?.id;
-        if (!user_id) return res.status(401).json({ message: "Unauthorized user request" });
+        const userId = req.user.id;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized user request."
+            });
+        }
+
         const user = await prisma.user.findUnique({
-            where: { id: BigInt(user_id) }, select: { id: true, fullName: true, email: true, phoneNumber: true }
+            where: {
+                id: BigInt(userId)
+            },
+            select: {
+                id: true,
+                fullName: true,
+                email: true,
+                phoneNumber: true
+            }
         });
-        if (!user) return res.status(401).json({ message: "User no Found" });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found."
+            });
+        }
+
         return res.status(200).json({
-            success: "success",
-            user: { id: Number(user.id), full_name: user.fullName, email: user.email, phone_number: user.phoneNumber }
+            success: true,
+            user: {
+                id: user.id.toString(),
+                full_name: user.fullName,
+                email: user.email,
+                phone_number: user.phoneNumber
+            }
         });
+
     } catch (error) {
-        console.error("Internal server Error", error);
-        return res.status(500).json({ message: "Internel server Error From get_me Controller" });
+        console.error("Get Me Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const getUserById = async (req, res) => {
     try {
         const { id } = req.params;
-        if (!id) return res.status(400).json({ message: "User id is required" });
+
+        if (!id) {
+            return res.status(400).json({
+                success: false,
+                message: "User ID is required."
+            });
+        }
+
         const user = await prisma.user.findUnique({
-            where: { id: BigInt(id) }, select: { fullName: true, email: true, phoneNumber: true }
+            where: {
+                id: BigInt(id)
+            },
+            select: {
+                fullName: true,
+                email: true,
+                phoneNumber: true
+            }
         });
-        if (!user) return res.status(404).json({ message: "User not Found" });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found."
+            });
+        }
+
         return res.status(200).json({
-            success: "success", user: { full_name: user.fullName, email: user.email, phone_number: user.phoneNumber }
+            success: true,
+            user: {
+                full_name: user.fullName,
+                email: user.email,
+                phone_number: user.phoneNumber
+            }
         });
+
     } catch (error) {
-        console.error("Internal server Error", error);
-        return res.status(500).json({ message: "Internel server Error From getUserById Controller" });
+        console.error("Get User By ID Error:", error);
+
+        return res.status(400).json({
+            success: false,
+            message: "Invalid user ID."
+        });
     }
 };
+
 
 const forgot_password = async (req, res) => {
     try {
         const { email } = req.body;
-        if (!email) return res.status(400).json({ message: "Email is required" });
-        const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-        if (!user) return res.status(200).json({
-            success: true, message: "If a user with that email exists, a password reset OTP has been sent."
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                message: "Email is required."
+            });
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true }
         });
-        const otp = generateOTP();
-        await prisma.otp.create({
-            data: {
-                userId: user.id, email, otpCodeHash: await bcrypt.hash(otp, 10),
-                otpType: "reset_password", expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+
+        /*
+         * Always return the same response whether the account exists
+         * or not. This prevents user-enumeration through this endpoint.
+         */
+        if (!user) {
+            return res.status(200).json({
+                success: true,
+                message: "If a user with that email exists, a password reset OTP has been sent."
+            });
+        }
+
+        /*
+         * Remove previous reset OTPs so that only the latest OTP remains valid.
+         */
+        await prisma.otp.deleteMany({
+            where: {
+                email,
+                otpType: "reset_password"
             }
         });
-        await sendEmail(email, "Your OTP Code", `Your OTP code is: ${otp}`, getOtpHtml(otp));
-        return res.status(200).json({
-            success: true, message: "If a user with that email exists, a password reset OTP has been sent."
+
+        const otp = generateOTP();
+
+        await prisma.otp.create({
+            data: {
+                userId: user.id,
+                email,
+                otpCodeHash: await bcrypt.hash(otp, 10),
+                otpType: "reset_password",
+                expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+            }
         });
+
+        await sendEmail(
+            email,
+            "Your Password Reset OTP",
+            `Your OTP code is: ${otp}`,
+            getOtpHtml(otp)
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "If a user with that email exists, a password reset OTP has been sent."
+        });
+
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: "Server Error" });
+        console.error("Forgot Password Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 const reset_password = async (req, res) => {
     try {
         const { email, newPassword } = req.body;
-        const user = await prisma.user.findFirst({ where: { email, isVerified: true } });
-        if (!user) return res.status(401).json({ message: "User not verified" });
-        await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await bcrypt.hash(newPassword, 10) } });
-        return res.json({ message: "Password reset successfully." });
+
+        if (!email || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: "Email and new password are required."
+            });
+        }
+
+        const user = await prisma.user.findFirst({
+            where: {
+                email,
+                isVerified: true
+            },
+            select: {
+                id: true
+            }
+        });
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: "User not found or not verified."
+            });
+        }
+
+        const passwordHash = await bcrypt.hash(newPassword, 10);
+
+        await prisma.user.update({
+            where: {
+                id: user.id
+            },
+            data: {
+                passwordHash
+            }
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Password reset successfully."
+        });
+
     } catch (error) {
-        console.error("reset password error: ", error);
-        return res.status(500).json({ Error: "Error From reset_password controller" });
+        console.error("Reset Password Error:", error);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error."
+        });
     }
 };
+
 
 export {
     registerUser, resend_otp, loginUser, refresh,
