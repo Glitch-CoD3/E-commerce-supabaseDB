@@ -10,10 +10,6 @@ import {
     logout_all_devices, forgot_password, reset_password,
     getUserById
 } from '../controllers/auth.controller.js';
-import {
-    get_me as getMeWithPrisma,
-    getUserById as getUserByIdWithPrisma
-} from '../controllers/prisma-fetch.controller.js';
 
 
 
@@ -74,7 +70,7 @@ router.post('/refresh', verifyJWT, refresh);
  * @description user get self data
  *@access private 
  */
-router.get('/get-me', verifyJWT, getMeWithPrisma)
+router.get('/get-me', verifyJWT, get_me)
 
 
 /**
@@ -100,7 +96,7 @@ router.put('/change-password', verifyJWT, reset_password)
  * @description Logged in user can change password
  *@access private 
  */
-router.get('/user/:id', verifyJWT, allowRoles(ROLES.ADMIN), getUserByIdWithPrisma )
+router.get('/user/:id', verifyJWT, allowRoles(ROLES.ADMIN), getUserById )
 
 
 export default router;

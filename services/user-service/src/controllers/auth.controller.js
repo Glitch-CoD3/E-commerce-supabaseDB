@@ -2,8 +2,9 @@ import prisma from "../config/prisma.js";
 import bcrypt from "bcrypt";
 import { generate_access_token, generate_refresh_token } from "../utils/token_generator_verify.js";
 import { hashPassword, comparePassword } from "../utils/hash_password.js";
-import { sendEmail } from "../utils/email_service_otp_send.js";
+// import { sendEmail } from "../utils/email_service_otp_send.js";
 import { generateOTP, getOtpHtml } from "../utils/generate_otp.js";
+import { send_smtp_Mail  } from "../utils/send_otp_smtp.js"
 
 const userResponse = (user) => ({
     id: Number(user.id),
@@ -39,7 +40,8 @@ const registerUser = async (req, res) => {
                 expiresAt: new Date(Date.now() + 10 * 60 * 1000)
             }
         });
-        await sendEmail(email, "Your OTP Code", `Your OTP code is: ${otp}`, getOtpHtml(otp));
+        // await sendEmail(email, "Your OTP Code", `Your OTP code is: ${otp}`, getOtpHtml(otp));
+        await send_smtp_Mail(email, "Your OTP Code", `Your OTP code is: ${otp}`, getOtpHtml(otp));
 
         return res.status(201).json({ message: "User created successfully", user: userResponse(user) });
     } catch (error) {
