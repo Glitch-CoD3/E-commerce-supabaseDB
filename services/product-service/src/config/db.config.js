@@ -35,6 +35,17 @@ const query = async (sql, values = []) => {
   return [{ affectedRows }];
 };
 
-const DB = { promise: () => ({ query }) };
+const getConnection = async () => {
+  await prisma.$connect();
+  return {
+    query,
+    beginTransaction: async () => {},
+    commit: async () => {},
+    rollback: async () => {},
+    release: () => {}
+  };
+};
+
+const DB = { promise: () => ({ query, getConnection }) };
 
 export default DB;
