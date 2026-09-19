@@ -1,23 +1,22 @@
-import app from './app.js';
-import dotenv from 'dotenv';
-import DB from './config/db.config.js';
-dotenv.config({ quiet: true });
+import "dotenv/config";
+import app from "./app.js";
+import DB from "./config/db.config.js";
 
-
-DB.getConnection((err, connection) => {
-    if (err) {
-        console.error('Error connecting to the database:', err);
-        process.exit(1); // Exit the application if the database connection fails
-    } else {
-        console.log(`✅ Database connected successfully with ${process.env.DB_NAME} database`);
+const startServer = async () => {
+    try {
+        const connection = await DB.promise().getConnection();
+        console.log("✅ Database connected successfully");
         connection.release();
-
 
         const PORT = process.env.PORT || 8000;
         app.listen(PORT, () => {
             console.log(`✅ User service is running on port ${PORT}`);
-            console.log("\n🌍 http://localhost:" + PORT + "/");
+            console.log(`🌍 http://localhost:${PORT}/`);
         });
+    } catch (error) {
+        console.error("❌ Error connecting to the database:", error);
+        process.exit(1);
     }
-});
+};
 
+startServer();

@@ -18,6 +18,7 @@ const createQuery = (client) => async (sql, parameters = []) => {
 };
 
 const getConnection = async () => {
+    await prisma.$connect();
     const query = createQuery(prisma);
     return {
         query,
