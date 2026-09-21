@@ -1,6 +1,11 @@
 import express from 'express';
-import { createShippingAddress, updateShippingAddress, getShippingAddress, getShippingAddressById, deleteShippingAddress } from '../controllers/shipping_addresses.js';
-import { getShippingAddress as getShippingAddressWithPrisma } from '../controllers/prisma-fetch.controller.js';
+import {
+    createShippingAddress,
+    updateShippingAddress,
+    getShippingAddress,
+    getShippingAddressById,
+    deleteShippingAddress
+} from '../controllers/shipping_addresses.js';
 import { verifyJWT } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
@@ -23,7 +28,7 @@ router.post('/', createShippingAddress);
  * @description Get a user's shipping address
  * @access Private
  */
-router.get('/user/:id', getShippingAddressWithPrisma);
+router.get('/user/:id', getShippingAddress);
 
 /**
  * @GET /api/v1/order/address/:id
