@@ -140,6 +140,7 @@ const createCategory = async (req, res) => {
  */
 const getAllCategories = async (req, res) => {
     try {
+        res.set("Cache-Control", "public, max-age=60");
         const categories = await prisma.category.findMany({
             where: {
                 deletedAt: null

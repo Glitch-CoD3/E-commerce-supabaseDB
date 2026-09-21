@@ -291,6 +291,9 @@ const createProduct = async (req, res) => {
 
 const getAllProducts = async (req, res) => {
     try {
+        // HTTP Cache
+        res.set("Cache-Control", "public, max-age=60");
+        
         const { page, limit, search, offset } = getPagination(req);
 
         const cacheKey = `products:list:${JSON.stringify({ page, limit, search })}`;
@@ -361,7 +364,7 @@ const getAllProducts = async (req, res) => {
 
         // Cache the response for 3 minutes
         try {
-            await redis.set(cacheKey, JSON.stringify(responsePayload), { EX: PRODUCTS_CACHE_TTL });
+            await redis.set(cacheKey, JSON.stringify(responsePayload), { ex: PRODUCTS_CACHE_TTL });
 
         } catch (redisErr) {
             console.error("[Redis] SET failed, response served without caching:", redisErr.message);

@@ -228,6 +228,9 @@ const getShippingAddressById = async (req, res) => {
  */
 const getShippingAddress = async (req, res) => {
     try {
+
+        res.set("Cache-Control", "private, max-age=60");
+
         const user_id = parseId(req.params.id);
 
         if (!user_id) {

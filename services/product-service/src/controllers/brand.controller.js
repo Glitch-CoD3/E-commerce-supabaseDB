@@ -73,6 +73,7 @@ const createBrand = async (req, res) => {
  */
 const getAllBrands = async (req, res) => {
     try {
+        res.set("Cache-Control", "public, max-age=60");
         const page = parseInt(req.query.page, 10) || 1;
         const limit = parseInt(req.query.limit, 10) || 10;
         const search = req.query.search || '';

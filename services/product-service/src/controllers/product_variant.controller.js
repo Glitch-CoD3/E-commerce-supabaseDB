@@ -238,6 +238,7 @@ const getAllProductVariantsWithProductDetails = async (req, res) => {
  */
 const getAllProductVariants = async (req, res) => {
     try {
+        res.set("Cache-Control", "public, max-age=60");
         const { product_id } = req.query;
         const { page, limit, offset, valid } = getPagination(req);
 

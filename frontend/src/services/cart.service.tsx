@@ -73,3 +73,11 @@ export const clearCart = async (): Promise<void> => {
   const response = await AxiosInstance.delete("/cart");
   return response.data;
 };
+
+
+//7 Cart count
+export const getCartCount = async (): Promise<CartType[]> => {
+  const response = await AxiosInstance.get("/cart/count");
+  // console.log("Get All Carts Response:", response.data);
+  return response.data;
+};

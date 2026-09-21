@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from "react";
-import { getAllCarts } from "./cart.service";
+import { getCartCount } from "./cart.service";
 
 type cartType = {
     count: number
@@ -18,12 +18,10 @@ export const CartProvider = ({ children }: { children: React.ReactNode }) => {
 
     const fetchCartCount = useCallback(async () => {
         try {
-            const res = await getAllCarts();
+            const res = await getCartCount();
             if (!res) throw new Error("Failed to fetch cart");
 
-
-            const count = Array.isArray(res) ? res.length : ((res as cartType).count || 0);
-            setCartCount(count);
+            setCartCount(res.length);
         } catch (err) {
             console.error(err);
         }

@@ -22,6 +22,7 @@ const ProductList = ({
   useEffect(() => {
     const fetchProducts = async () => {
       try {
+        
         const response = await getAllProducts();
         
         setProducts(response.all_products);
@@ -40,6 +41,8 @@ const ProductList = ({
           product.category_slug.toLowerCase() === category.toLowerCase()
       )
       : products;
+
+
 
   return (
     <div className="w-full">

@@ -32,7 +32,7 @@ export const createCategory = async (data: Partial<CategoryType>) => {
 
 // Get all Categories API call
 export const getCategories = async () => {
-  const response = await AxiosInstance.get("/categories");
+  const response = await AxiosInstance.get("/categories/");
   return response.data;
 };
 
@@ -103,7 +103,8 @@ export const createProduct = async (data: any) => {
 
 // Get all Products API call
 export const getAllProducts = async (page: number = 1, perPage: number = 10) => {
-  const response = await AxiosInstance.get("/products", {
+   console.trace("🔥 getAllProducts called");
+  const response = await AxiosInstance.get("/products/", {
     params: {
       page,
       per_page: perPage,
