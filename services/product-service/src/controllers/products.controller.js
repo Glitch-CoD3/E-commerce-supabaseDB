@@ -1,37 +1,156 @@
-import prisma from "../config/prisma.js";
 import slugify from "slugify";
+import prisma from "../config/prisma.js";
 
-const query = async (sql, values = []) => {
-    let parameterIndex = 0;
-    const statement = sql
-        .replace(/\bIFNULL\s*\(/gi, "COALESCE(")
-        .replace(/\bNOW\s*\(\s*\)/gi, "CURRENT_TIMESTAMP")
-        .replace(/\?/g, () => `$${++parameterIndex}`);
-    const command = statement.trim().split(/\s+/)[0].toUpperCase();
+/* -------------------------------------------------------------------------- */
+/*                                   Helpers                                  */
+/* -------------------------------------------------------------------------- */
 
-    if (command === "SELECT" || command === "WITH") {
-        const rows = await prisma.$queryRawUnsafe(statement, ...values);
-        return [rows.map((row) => Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [
-                key,
-                typeof value === "bigint" ? Number(value) : value
-            ])
-        ))];
-    }
-
-    if (command === "INSERT") {
-        const rows = await prisma.$queryRawUnsafe(
-            `${statement.trim().replace(/;$/, "")} RETURNING id`,
-            ...values
-        );
-        return [{ insertId: rows[0]?.id == null ? undefined : Number(rows[0].id) }];
-    }
-
-    const affectedRows = await prisma.$executeRawUnsafe(statement, ...values);
-    return [{ affectedRows }];
+const PRISMA_ERRORS = {
+    P2002: [409, "A record with this unique value already exists."],
+    P2003: [400, "A related record referenced in the request does not exist."],
+    P2025: [404, "Record not found."]
 };
 
-const prismaQuery = query;
+const serializeBigInt = (data) => JSON.parse(JSON.stringify(data, (_, value) =>
+    typeof value === "bigint" ? Number(value) : value
+));
+
+const parseId = (id) => {
+    const value = String(id ?? "");
+    return /^\d+$/.test(value) ? BigInt(value) : null;
+};
+
+const generateSlug = (name) => slugify(name, {
+    lower: true,
+    strict: true,
+    trim: true
+});
+
+const getPagination = (req) => {
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.max(parseInt(req.query.limit, 10) || 10, 1);
+    const search = String(req.query.search || "");
+
+    return { page, limit, search, offset: (page - 1) * limit };
+};
+
+const buildSearchFilter = (search) => search
+    ? {
+        OR: [
+            { productName: { contains: search, mode: "insensitive" } },
+            { description: { contains: search, mode: "insensitive" } },
+            { urlSlug: { contains: search, mode: "insensitive" } }
+        ]
+    }
+    : {};
+
+const buildPaginationLinks = (basePath, { page, limit, totalPages, search }) => {
+    const link = (target) =>
+        `${basePath}?page=${target}&limit=${limit}&search=${encodeURIComponent(search)}`;
+
+    return {
+        self: link(page),
+        first: link(1),
+        last: link(totalPages),
+        previous: page > 1 ? link(page - 1) : null,
+        next: page < totalPages ? link(page + 1) : null
+    };
+};
+
+const handleError = (res, error, context, message) => {
+    console.error(`${context}:`, error);
+
+    const mapped = PRISMA_ERRORS[error.code];
+    if (mapped) {
+        return res.status(mapped[0]).json({ success: false, message: mapped[1] });
+    }
+
+    if (error.name === "PrismaClientValidationError") {
+        return res.status(400).json({
+            success: false,
+            message: "Invalid data provided."
+        });
+    }
+
+    return res.status(500).json({
+        success: false,
+        message,
+        ...(process.env.NODE_ENV !== "production" && { error: error.message })
+    });
+};
+
+const unique = (values) => [
+    ...new Map(values.map((value) => [JSON.stringify(value), value])).values()
+];
+
+// Maps each variant colour to its image URL
+const buildImagesByColor = (variants) => variants.reduce((images, variant) => {
+    variant.images.forEach(({ imageUrl }) => {
+        images[variant.colors] = imageUrl;
+    });
+    return images;
+}, {});
+
+const categorySelect = { select: { categoryName: true, urlSlug: true } };
+const brandSelect = { select: { id: true, brandName: true, logo: true } };
+
+const variantSelect = {
+    sizes: true,
+    colors: true,
+    images: { where: { deletedAt: null }, select: { imageUrl: true } }
+};
+
+// Flat product row + category (snake_case response shape)
+const formatProduct = (product) => ({
+    id: product.id,
+    category_id: product.categoryId,
+    brand_id: product.brandId,
+    product_name: product.productName,
+    url_slug: product.urlSlug,
+    description: product.description,
+    short_description: product.shortDescription,
+    price: product.price,
+    stock_quantity: product.stockQuantity,
+    status: product.status,
+    created_at: product.createdAt,
+    updated_at: product.updatedAt,
+    deleted_at: product.deletedAt,
+    category_name: product.category?.categoryName ?? null,
+    category_slug: product.category?.urlSlug ?? null
+});
+
+// Product with brand and aggregated variant data
+const formatListProduct = (product) => {
+    const { variants } = product;
+
+    return {
+        id: product.id,
+        name: product.productName,
+        shortDescription: product.shortDescription,
+        description: product.description,
+        price: product.price,
+        stock_quantity: product.stockQuantity,
+        category_id: product.categoryId,
+        url_slug: product.urlSlug,
+        status: product.status,
+        category_name: product.category?.categoryName ?? null,
+        category_slug: product.category?.urlSlug ?? null,
+        brand_id: product.brand?.id ?? null,
+        brand_name: product.brand?.brandName ?? null,
+        brand_logo: product.brand?.logo ?? null,
+        total_variants: variants.length,
+        variant_ids: variants.map(({ id }) => id),
+        sizes: variants.map(({ sizes }) => sizes),
+        colors: variants.map(({ colors }) => colors),
+        images: buildImagesByColor(variants),
+        variant_stocks: variants.map(({ stockQuantity }) => stockQuantity),
+        variant_prices: variants.map(({ price }) => price)
+    };
+};
+
+/* -------------------------------------------------------------------------- */
+/*                                 Controllers                                */
+/* -------------------------------------------------------------------------- */
 
 /**
  * @method POST /api/v1/products
@@ -47,120 +166,97 @@ const createProduct = async (req, res) => {
             short_description,
             description,
             price,
-            stock_quantity,
-            status
+            stock_quantity
         } = req.body;
 
-        if (
-            !category_id ||
-            !product_name ||
-            !price || !brand_id
-        ) {
+        if (!category_id || !product_name || !price || !brand_id) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "Category Id,Brand Id, product name, price and stock quantity are required."
+                message: "Category Id, Brand Id, product name, price and stock quantity are required."
             });
         }
 
-        if (stock_quantity === undefined || Number(stock_quantity) < 0) {
+        if (stock_quantity === undefined || !(Number(stock_quantity) >= 0)) {
             return res.status(400).json({
                 success: false,
-                message:
-                    "stock quantity is required and never be Negative."
+                message: "Stock quantity is required and must never be negative."
+            });
+        }
+
+        const categoryId = parseId(category_id);
+        const brandId = parseId(brand_id);
+
+        if (!categoryId || !brandId) {
+            return res.status(400).json({
+                success: false,
+                message: "Category Id and Brand Id must be valid numbers."
             });
         }
 
         // Check category exists
-        const [category] = await query(
-            `SELECT id
-             FROM categories
-             WHERE id = ?
-             LIMIT 1`,
-            [category_id]
-        );
+        const category = await prisma.category.findUnique({
+            where: { id: categoryId },
+            select: { id: true }
+        });
 
-        if (!category.length) {
+        if (!category) {
             return res.status(404).json({
                 success: false,
                 message: "Category not found."
             });
         }
 
-
         // Check brand exists
-        const [brand] = await query(
-            `SELECT id, brand_name
-             FROM brands
-             WHERE id = ?
-             LIMIT 1`,
-            [brand_id]
-        );
+        const brand = await prisma.brand.findUnique({
+            where: { id: brandId },
+            select: { id: true, brandName: true }
+        });
 
-        if (!brand.length) {
+        if (!brand) {
             return res.status(404).json({
                 success: false,
                 message: "Brand not found."
             });
         }
 
-        const brand_name = brand[0].brand_name;
+        const brand_name = brand.brandName;
 
-        // Generate slug
-        let slug = slugify(product_name, {
-            lower: true,
-            strict: true,
-            trim: true
+        // Generate a unique slug
+        let slug = generateSlug(product_name);
+
+        const existingSlug = await prisma.product.findFirst({
+            where: { urlSlug: slug },
+            select: { id: true }
         });
 
-        // Check slug uniqueness
-        const [existingSlug] = await query(
-            `SELECT id
-             FROM products
-             WHERE url_slug = ?
-             LIMIT 1`,
-            [slug]
-        );
-
-        if (existingSlug.length) {
+        if (existingSlug) {
             slug = `${slug}-${Date.now()}`;
         }
 
         const productStatus = Number(stock_quantity) > 0 ? "active" : "inactive";
 
+        const createdProduct = await prisma.product.create({
+            data: {
+                categoryId,
+                brandId,
+                productName: product_name,
+                urlSlug: slug,
+                description: description || "",
+                shortDescription: short_description || "",
+                price,
+                stockQuantity: Number(stock_quantity),
+                status: productStatus
+            },
+            select: { id: true }
+        });
 
-        const [result] = await query(
-            `INSERT INTO products
-            (
-                category_id,
-                brand_id,
-                product_name,
-                url_slug,
-                description,
-                short_description,
-                price,
-                stock_quantity,
-                status
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                category_id,
-                brand_id,
-                product_name,
-                slug,
-                description || "",
-                short_description || "",
-                price,
-                stock_quantity,
-                productStatus
-            ]
-        );
+        const id = Number(createdProduct.id);
 
         return res.status(201).json({
             success: true,
             message: "Product created successfully.",
             created_product: {
-                id: result.insertId,
+                id,
                 category_id,
                 brand_id,
                 brand_name,
@@ -173,179 +269,66 @@ const createProduct = async (req, res) => {
                 status: productStatus
             },
             links: {
-                self: `/api/v1/products/${result.insertId}`,
+                self: `/api/v1/products/${id}`,
                 bySlug: `/api/v1/products/slug/${slug}`,
-                update: `/api/v1/products/${result.insertId}`,
-                delete: `/api/v1/products/${result.insertId}`,
-                allProducts: `/api/v1/products`
+                update: `/api/v1/products/${id}`,
+                delete: `/api/v1/products/${id}`,
+                allProducts: "/api/v1/products"
             }
         });
-
     } catch (error) {
-        console.error(error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Create Product Error", "Failed to create product.");
     }
 };
 
-
+/**
+ * @method GET /api/v1/products
+ * @description Retrieve all products (with pagination and search) including
+ *              brand, category and aggregated variant data
+ * @access Public
+ */
 const getAllProducts = async (req, res) => {
     try {
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 10;
-        const search = req.query.search || "";
+        const { page, limit, search, offset } = getPagination(req);
 
-        const offset = (page - 1) * limit;
+        const where = { deletedAt: null, ...buildSearchFilter(search) };
 
-        let whereClause = `WHERE p.deleted_at IS NULL`;
-        let values = [];
+        const [totalProducts, products] = await Promise.all([
+            prisma.product.count({ where }),
+            prisma.product.findMany({
+                where,
+                orderBy: { createdAt: "desc" },
+                skip: offset,
+                take: limit,
+                select: {
+                    id: true,
+                    productName: true,
+                    shortDescription: true,
+                    description: true,
+                    price: true,
+                    stockQuantity: true,
+                    categoryId: true,
+                    urlSlug: true,
+                    status: true,
+                    category: categorySelect,
+                    brand: brandSelect,
+                    variants: {
+                        where: { deletedAt: null },
+                        orderBy: { id: "desc" },
+                        select: { id: true, stockQuantity: true, price: true, ...variantSelect }
+                    }
+                }
+            })
+        ]);
 
-        // Search
-        if (search) {
-            whereClause += `
-                AND (
-                    p.product_name LIKE ?
-                    OR p.description LIKE ?
-                    OR p.url_slug LIKE ?
-                )`;
-
-            const keyword = `%${search}%`;
-            values.push(keyword, keyword, keyword);
-        }
-
-        // Total products count
-        const [countResult] = await prismaQuery(
-            `
-            SELECT COUNT(*) AS total
-            FROM products p
-            ${whereClause}
-            `,
-            values
-        );
-
-        const totalProducts = countResult[0].total;
         const totalPages = Math.ceil(totalProducts / limit);
-
-        // Fetch products with aggregated sizes, colors, and images
-        const [rows] = await prismaQuery(
-            `
-          SELECT
-    p.id,
-    p.product_name AS name,
-    p.short_description AS shortDescription,
-    p.description,
-    p.price,
-    p.stock_quantity,
-    p.category_id,
-    p.url_slug,
-    p.status,
-    c.category_name,
-    c.url_slug AS category_slug,
-    b.id AS brand_id,
-    b.brand_name,
-    b.logo AS brand_logo,
-    
-    (
-        SELECT COUNT(*)
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS total_variants,
-
-    /* 1. Variant IDs (Ordered DESC) */
-    (
-        SELECT COALESCE((SELECT json_agg(pv.id ORDER BY pv.id DESC)::text
-                         FROM product_variants pv
-                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS variant_ids,
-
-    /* 2. Sizes (Ordered DESC by variant ID to preserve index mapping) */
-    (
-        SELECT COALESCE((SELECT json_agg(pv.sizes ORDER BY pv.id DESC)::text
-                         FROM product_variants pv
-                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS sizes,
-
-    /* 3. Colors (Ordered DESC by variant ID to preserve index mapping) */
-    (
-        SELECT COALESCE((SELECT json_agg(pv.colors ORDER BY pv.id DESC)::text
-                         FROM product_variants pv
-                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS colors,
-
-    /* 4. Images Object (Ordered DESC by variant ID) */
-    (
-        SELECT COALESCE((SELECT json_object_agg(pv.colors, iv.image_url)::text
-                         FROM product_variants pv
-                         JOIN variant_images iv ON iv.product_variant_id = pv.id
-                         WHERE pv.product_id = p.id
-                           AND pv.deleted_at IS NULL
-                           AND iv.deleted_at IS NULL), '{}')
-        FROM product_variants pv
-        JOIN variant_images iv ON iv.product_variant_id = pv.id
-        WHERE pv.product_id = p.id 
-          AND pv.deleted_at IS NULL 
-          AND iv.deleted_at IS NULL
-    ) AS images,
-
-    /* 5. Variant Stocks (Ordered DESC) */
-    (
-        SELECT COALESCE((SELECT json_agg(pv.stock_quantity ORDER BY pv.id DESC)::text
-                         FROM product_variants pv
-                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS variant_stocks,
-
-    /* 6. Variant Prices (Ordered DESC) */
-    (
-        SELECT COALESCE((SELECT json_agg(pv.price ORDER BY pv.id DESC)::text
-                         FROM product_variants pv
-                         WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-        FROM product_variants pv 
-        WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-    ) AS variant_prices
-
-FROM products p
-LEFT JOIN categories c ON p.category_id = c.id
-LEFT JOIN brands b ON p.brand_id = b.id
-${whereClause}
-ORDER BY p.created_at DESC
-LIMIT ?
-OFFSET ?
-            `,
-            [...values, limit, offset]
-        );
-
-        // Format and parse JSON fields for each product
-        const formattedProducts = rows.map((product) => {
-            try {
-                product.sizes = product.sizes ? JSON.parse(product.sizes) : [];
-                product.colors = product.colors ? JSON.parse(product.colors) : [];
-                product.images = product.images ? JSON.parse(product.images) : {};
-            } catch (parseErr) {
-                console.error("JSON Parsing Error for product ID", product.id, parseErr);
-                product.sizes = [];
-                product.colors = [];
-                product.images = {};
-            }
-            return product;
-        });
+        const formattedProducts = products.map(formatListProduct);
 
         return res.status(200).json({
             success: true,
             message: formattedProducts.length
                 ? "Products fetched successfully."
                 : "No products found.",
-
             meta: {
                 total_products: totalProducts,
                 total_pages: totalPages,
@@ -353,140 +336,13 @@ OFFSET ?
                 per_page: limit,
                 search
             },
-
-            all_products: formattedProducts,
-
-            links: {
-                self: `/api/v1/products?page=${page}&limit=${limit}&search=${search}`,
-                first: `/api/v1/products?page=1&limit=${limit}&search=${search}`,
-                last: `/api/v1/products?page=${totalPages}&limit=${limit}&search=${search}`,
-                previous:
-                    page > 1
-                        ? `/api/v1/products?page=${page - 1}&limit=${limit}&search=${search}`
-                        : null,
-                next:
-                    page < totalPages
-                        ? `/api/v1/products?page=${page + 1}&limit=${limit}&search=${search}`
-                        : null
-            }
+            all_products: serializeBigInt(formattedProducts),
+            links: buildPaginationLinks("/api/v1/products", { page, limit, totalPages, search })
         });
-
     } catch (error) {
-        console.error("Get All Products Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Get All Products Error", "Failed to retrieve products.");
     }
 };
-/**
- * @method GET /api/v1/products
- * @description Retrieve all products
- * @access Public
- */
-// const getAllProducts = async (req, res) => {
-//     try {
-//         const page = Number(req.query.page) || 1;
-//         const limit = Number(req.query.limit) || 10;
-//         const search = req.query.search || "";
-
-//         const offset = (page - 1) * limit;
-
-//         let whereClause = `WHERE p.deleted_at IS NULL`;
-//         let values = [];
-
-//         // Search
-//         if (search) {
-//             whereClause += `
-//                 AND (
-//                     p.product_name LIKE ?
-//                     OR p.description LIKE ?
-//                     OR p.url_slug LIKE ?
-//                 )`;
-
-//             const keyword = `%${search}%`;
-//             values.push(keyword, keyword, keyword);
-//         }
-
-//         // Total products
-//         const [countResult] = await DB.promise().query(
-//             `
-//             SELECT COUNT(*) AS total
-//             FROM products p
-//             ${whereClause}
-//             `,
-//             values
-//         );
-
-//         const totalProducts = countResult[0].total;
-//         const totalPages = Math.ceil(totalProducts / limit);
-
-//         // Get products
-//         const [products] = await DB.promise().query(
-//             `
-//     SELECT
-//         p.*,
-//         c.category_name,
-//         c.url_slug AS category_slug,
-//         b.brand_name AS brand_name,
-//         b.*
-//     FROM products p
-//     LEFT JOIN categories c
-//         ON p.category_id = c.id
-//     LEFT JOIN brands b
-//         ON p.brand_id = b.id
-//     ${whereClause}
-//     ORDER BY p.created_at DESC
-//     LIMIT ?
-//     OFFSET ?
-//     `,
-//             [...values, limit, offset]
-//         );
-
-
-
-//         return res.status(200).json({
-//             success: true,
-//             message: products.length
-//                 ? "Products fetched successfully."
-//                 : "No products found.",
-
-//             meta: {
-//                 total_products: totalProducts,
-//                 total_pages: totalPages,
-//                 current_page: page,
-//                 per_page: limit,
-//                 search
-//             },
-
-//             all_products: products,
-
-//             links: {
-//                 self: `/api/v1/products?page=${page}&limit=${limit}&search=${search}`,
-//                 first: `/api/v1/products?page=1&limit=${limit}&search=${search}`,
-//                 last: `/api/v1/products?page=${totalPages}&limit=${limit}&search=${search}`,
-//                 previous:
-//                     page > 1
-//                         ? `/api/v1/products?page=${page - 1}&limit=${limit}&search=${search}`
-//                         : null,
-//                 next:
-//                     page < totalPages
-//                         ? `/api/v1/products?page=${page + 1}&limit=${limit}&search=${search}`
-//                         : null
-//             }
-//         });
-
-//     } catch (error) {
-//         console.error(error);
-
-//         return res.status(500).json({
-//             success: false,
-//             message: "Internal server error."
-//         });
-//     }
-// };
-
 
 /**
  * @method GET /api/v1/products/:id
@@ -496,92 +352,66 @@ OFFSET ?
 const getProductById = async (req, res) => {
     try {
         const { id } = req.params;
+        const productId = parseId(id);
 
-        if (!id) {
+        if (!productId) {
             return res.status(400).json({
                 success: false,
                 message: "Valid product ID is required."
             });
         }
 
-        const [rows] = await prismaQuery(
-            `
-            SELECT 
-                p.id,
-                p.product_name,
-                p.short_description AS shortDescription,
-                p.description,
-                p.price,
-                p.category_id,
-                p.url_slug,
-                c.category_name,
-                c.url_slug AS category_slug,
-                b.id AS brand_id,
-                b.brand_name,
-                b.logo AS brand_logo,
-                (
-              SELECT COALESCE(SUM(pv.stock_quantity), 0)
-              FROM product_variants pv 
-               WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-                ) AS quantity,
-                (
-                    SELECT COALESCE((SELECT json_agg(DISTINCT pv.sizes)::text
-                                     FROM product_variants pv
-                                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-                    FROM product_variants pv 
-                    WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-                ) AS sizes,
-                (
-                    SELECT COALESCE((SELECT json_agg(DISTINCT pv.colors)::text
-                                     FROM product_variants pv
-                                     WHERE pv.product_id = p.id AND pv.deleted_at IS NULL), '[]')
-                    FROM product_variants pv 
-                    WHERE pv.product_id = p.id AND pv.deleted_at IS NULL
-                ) AS colors,
-                (
-                    SELECT COALESCE((SELECT json_object_agg(pv.colors, iv.image_url)::text
-                                     FROM product_variants pv
-                                     JOIN variant_images iv ON iv.product_variant_id = pv.id
-                                     WHERE pv.product_id = p.id
-                                       AND pv.deleted_at IS NULL
-                                       AND iv.deleted_at IS NULL), '{}')
-                    FROM product_variants pv
-                    JOIN variant_images iv ON iv.product_variant_id = pv.id
-                    WHERE pv.product_id = p.id 
-                      AND pv.deleted_at IS NULL 
-                      AND iv.deleted_at IS NULL
-                ) AS images
-            FROM products p
-            LEFT JOIN categories c ON p.category_id = c.id
-            LEFT JOIN brands b ON p.brand_id = b.id
-            WHERE p.id = ? AND p.deleted_at IS NULL
-            LIMIT 1
-            `,
-            [id]
-        );
+        const result = await prisma.product.findFirst({
+            where: { id: productId, deletedAt: null },
+            select: {
+                id: true,
+                productName: true,
+                shortDescription: true,
+                description: true,
+                price: true,
+                categoryId: true,
+                urlSlug: true,
+                category: categorySelect,
+                brand: brandSelect,
+                variants: {
+                    where: { deletedAt: null },
+                    select: { stockQuantity: true, ...variantSelect }
+                }
+            }
+        });
 
-        if (!rows.length || !rows[0].id) {
+        if (!result) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
             });
         }
 
-        const product = rows[0];
+        const { variants } = result;
 
-        // Parse MariaDB string representations into Javascript Objects / Arrays
-        try {
-            product.sizes = product.sizes ? JSON.parse(product.sizes) : [];
-            product.colors = product.colors ? JSON.parse(product.colors) : [];
-            product.images = product.images ? JSON.parse(product.images) : {};
-        } catch (parseErr) {
-            console.error("JSON Parsing Error:", parseErr);
-        }
+        const product = {
+            id: result.id,
+            product_name: result.productName,
+            shortDescription: result.shortDescription,
+            description: result.description,
+            price: result.price,
+            category_id: result.categoryId,
+            url_slug: result.urlSlug,
+            category_name: result.category?.categoryName ?? null,
+            category_slug: result.category?.urlSlug ?? null,
+            brand_id: result.brand?.id ?? null,
+            brand_name: result.brand?.brandName ?? null,
+            brand_logo: result.brand?.logo ?? null,
+            quantity: variants.reduce((total, { stockQuantity }) => total + stockQuantity, 0),
+            sizes: unique(variants.map(({ sizes }) => sizes)),
+            colors: unique(variants.map(({ colors }) => colors)),
+            images: buildImagesByColor(variants)
+        };
 
         return res.status(200).json({
             success: true,
             message: "Product retrieved successfully.",
-            product: product,
+            product: serializeBigInt(product),
             links: {
                 self: `/api/v1/products/${id}`,
                 bySlug: `/api/v1/products/slug/${product.url_slug}`,
@@ -592,17 +422,10 @@ const getProductById = async (req, res) => {
                 allProducts: "/api/v1/products"
             }
         });
-
     } catch (error) {
-        console.error("Get Product By ID Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Get Product By ID Error", "Failed to retrieve product.");
     }
 };
-
 
 /**
  * @method GET /api/v1/products/slug/:slug
@@ -620,54 +443,49 @@ const getProductBySlug = async (req, res) => {
             });
         }
 
-        const [product] = await prismaQuery(
-            `
-            SELECT
-                p.*,
-            c.category_name,
-            c.url_slug AS category_slug
-            FROM products p
-            LEFT JOIN categories c
-                ON p.category_id = c.id
-            WHERE p.url_slug = ?
-            AND p.deleted_at IS NULL
-            LIMIT 1
-            `,
-            [slug]
-        );
+        const result = await prisma.product.findFirst({
+            where: { urlSlug: slug, deletedAt: null },
+            include: { category: categorySelect }
+        });
 
-        if (!product.length) {
+        if (!result) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
             });
         }
 
+        const product = formatProduct(result);
+
         return res.status(200).json({
             success: true,
             message: "Product retrieved successfully.",
-            product: product[0],
+            product: serializeBigInt(product),
             links: {
-                self: `/ api / v1 / products / slug / ${slug}`,
-                byId: `/ api / v1 / products / ${product[0].id}`,
-                category: `/ api / v1 / categories / ${product[0].category_id}`,
-                update: `/ api / v1 / products / ${product[0].id}`,
-                updateStatus: `/ api / v1 / products / ${product[0].id} / status`,
-                delete: `/ api / v1 / products / ${product[0].id}`,
+                self: `/api/v1/products/slug/${slug}`,
+                byId: `/api/v1/products/${product.id}`,
+                category: `/api/v1/categories/${product.category_id}`,
+                update: `/api/v1/products/${product.id}`,
+                updateStatus: `/api/v1/products/${product.id}/status`,
+                delete: `/api/v1/products/${product.id}`,
                 allProducts: "/api/v1/products"
             }
         });
-
     } catch (error) {
-        console.error("Get Product By Slug Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Get Product By Slug Error", "Failed to retrieve product.");
     }
 };
 
+// Request field -> Prisma field (fields allowed for PATCH)
+const allowedFields = {
+    category_id: "categoryId",
+    product_name: "productName",
+    description: "description",
+    short_description: "shortDescription",
+    price: "price",
+    stock_quantity: "stockQuantity",
+    status: "status"
+};
 
 /**
  * @method PATCH /api/v1/products/:id
@@ -677,8 +495,9 @@ const getProductBySlug = async (req, res) => {
 const updateProduct = async (req, res) => {
     try {
         const { id } = req.params;
+        const productId = parseId(id);
 
-        if (!id || isNaN(id)) {
+        if (!productId) {
             return res.status(400).json({
                 success: false,
                 message: "Valid product ID is required."
@@ -686,40 +505,20 @@ const updateProduct = async (req, res) => {
         }
 
         // Check product exists
-        const [products] = await prismaQuery(
-            `SELECT *
-        FROM products
-             WHERE id = ?
-            AND deleted_at IS NULL
-             LIMIT 1`,
-            [id]
-        );
+        const existingProduct = await prisma.product.findFirst({
+            where: { id: productId, deletedAt: null }
+        });
 
-        if (!products.length) {
+        if (!existingProduct) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
             });
         }
 
-        const existingProduct = products[0];
+        const data = {};
 
-        const updateFields = [];
-        const values = [];
-
-        // Allowed fields for PATCH
-        const allowedFields = [
-            "category_id",
-            "product_name",
-            "description",
-            "short_description",
-            "price",
-            "stock_quantity",
-            "status"
-        ];
-
-        for (const field of allowedFields) {
-
+        for (const [field, column] of Object.entries(allowedFields)) {
             // Skip fields not included in request
             if (!Object.prototype.hasOwnProperty.call(req.body, field)) {
                 continue;
@@ -728,133 +527,98 @@ const updateProduct = async (req, res) => {
             const value = req.body[field];
 
             switch (field) {
-
                 case "category_id": {
+                    const categoryId = parseId(value);
 
-                    const [category] = await prismaQuery(
-                        `SELECT id
-                         FROM categories
-                         WHERE id = ?
-            AND deleted_at IS NULL
-                         LIMIT 1`,
-                        [value]
-                    );
+                    const category = categoryId && await prisma.category.findFirst({
+                        where: { id: categoryId, deletedAt: null },
+                        select: { id: true }
+                    });
 
-                    if (!category.length) {
+                    if (!category) {
                         return res.status(404).json({
                             success: false,
                             message: "Category not found."
                         });
                     }
 
-                    updateFields.push("category_id = ?");
-                    values.push(value);
+                    data.categoryId = categoryId;
                     break;
                 }
 
                 case "product_name": {
+                    data.productName = value;
 
-                    updateFields.push("product_name = ?");
-                    values.push(value);
+                    if (value !== existingProduct.productName) {
+                        let slug = generateSlug(value);
 
-                    if (value !== existingProduct.product_name) {
-
-                        let slug = slugify(value, {
-                            lower: true,
-                            strict: true,
-                            trim: true
+                        const slugExists = await prisma.product.findFirst({
+                            where: { urlSlug: slug, NOT: { id: productId } },
+                            select: { id: true }
                         });
 
-                        const [slugExists] = await prismaQuery(
-                            `SELECT id
-                             FROM products
-                             WHERE url_slug = ?
-            AND id != ?
-            LIMIT 1`,
-                            [slug, id]
-                        );
-
-                        if (slugExists.length) {
-                            slug = `${slug} - ${Date.now()}`;
+                        if (slugExists) {
+                            slug = `${slug}-${Date.now()}`;
                         }
 
-                        updateFields.push("url_slug = ?");
-                        values.push(slug);
+                        data.urlSlug = slug;
                     }
-
                     break;
                 }
 
+                case "price":
+                case "stock_quantity":
+                    data[column] = Number(value);
+                    break;
+
                 default:
-                    updateFields.push(`${field} = ? `);
-                    values.push(value);
+                    data[column] = value;
             }
         }
 
-        if (!updateFields.length) {
+        if (!Object.keys(data).length) {
             return res.status(400).json({
                 success: false,
                 message: "No fields provided for update."
             });
         }
 
-        updateFields.push("updated_at = NOW()");
-        values.push(id);
+        const updatedProduct = await prisma.product.update({
+            where: { id: productId },
+            data: { ...data, updatedAt: new Date() },
+            include: { category: categorySelect }
+        });
 
-        await prismaQuery(
-            `UPDATE products
-             SET ${updateFields.join(", ")}
-             WHERE id = ? `,
-            values
-        );
-
-        const [updatedProducts] = await prismaQuery(
-            `SELECT
-                p.*,
-            c.category_name,
-            c.url_slug AS category_slug
-             FROM products p
-             LEFT JOIN categories c
-                ON p.category_id = c.id
-             WHERE p.id = ?
-            LIMIT 1`,
-            [id]
-        );
+        const updated_product = formatProduct(updatedProduct);
 
         return res.status(200).json({
             success: true,
             message: "Product updated successfully.",
-            updated_product: updatedProducts[0],
+            updated_product: serializeBigInt(updated_product),
             links: {
-                self: `/ api / v1 / products / ${id}`,
-                by_slug: `/ api / v1 / products / slug / ${updatedProducts[0].url_slug}`,
-                category: `/ api / v1 / categories / ${updatedProducts[0].category_id}`,
+                self: `/api/v1/products/${id}`,
+                by_slug: `/api/v1/products/slug/${updated_product.url_slug}`,
+                category: `/api/v1/categories/${updated_product.category_id}`,
                 all_products: "/api/v1/products",
-                delete: `/ api / v1 / products / ${id}`
+                delete: `/api/v1/products/${id}`
             }
         });
-
     } catch (error) {
-        console.error("Update Product Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Update Product Error", "Failed to update product.");
     }
 };
 
-
 /**
  * @method DELETE /api/v1/products/:id
- * @description Delete a product by its ID
+ * @description Soft delete a product by its ID
  * @access Private (Admin)
  */
 const deleteProduct = async (req, res) => {
     try {
         const { id } = req.params;
+        const productId = parseId(id);
 
-        if (!id || isNaN(id)) {
+        if (!productId) {
             return res.status(400).json({
                 success: false,
                 message: "Valid product ID is required."
@@ -862,16 +626,12 @@ const deleteProduct = async (req, res) => {
         }
 
         // Check if product exists
-        const [product] = await prismaQuery(
-            `SELECT id, product_name
-             FROM products
-             WHERE id = ?
-            AND deleted_at IS NULL
-             LIMIT 1`,
-            [id]
-        );
+        const product = await prisma.product.findFirst({
+            where: { id: productId, deletedAt: null },
+            select: { id: true, productName: true }
+        });
 
-        if (!product.length) {
+        if (!product) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
@@ -879,51 +639,46 @@ const deleteProduct = async (req, res) => {
         }
 
         // Soft delete
-        await prismaQuery(
-            `UPDATE products
-             SET deleted_at = NOW()
-             WHERE id = ? `,
-            [id]
-        );
+        const deletedAt = new Date();
+
+        await prisma.product.update({
+            where: { id: productId },
+            data: { deletedAt }
+        });
 
         return res.status(200).json({
             success: true,
             message: "Product deleted successfully.",
             deleted_product: {
                 id: Number(id),
-                product_name: product[0].product_name,
-                deleted_at: new Date().toISOString()
+                product_name: product.productName,
+                deleted_at: deletedAt.toISOString()
             },
             links: {
                 allProducts: "/api/v1/products",
                 create: "/api/v1/products/create-product"
             }
         });
-
     } catch (error) {
-        console.error("Delete Product Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Delete Product Error", "Failed to delete product.");
     }
 };
 
+const allowedStatuses = ["inactive", "active", "discontinued"];
 
 /**
  * @method PATCH /api/v1/products/:id/status
  * @description Update the status of a product
  * @access Private (Admin)
  */
-
 const updateProductStatus = async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
+        const productId = parseId(id);
 
         // Validate product ID
-        if (!id || isNaN(id)) {
+        if (!productId) {
             return res.status(400).json({
                 success: false,
                 message: "Valid product ID is required."
@@ -940,37 +695,25 @@ const updateProductStatus = async (req, res) => {
 
         const normalizedStatus = status.trim().toLowerCase();
 
-        const allowedStatuses = [
-            "inactive",
-            "active",
-            "discontinued"
-        ];
-
         if (!allowedStatuses.includes(normalizedStatus)) {
             return res.status(400).json({
                 success: false,
-                message: `Invalid status.Allowed values are: ${allowedStatuses.join(", ")}`
+                message: `Invalid status. Allowed values are: ${allowedStatuses.join(", ")}`
             });
         }
 
         // Check product exists
-        const [products] = await prismaQuery(
-            `SELECT id, status
-             FROM products
-             WHERE id = ?
-            AND deleted_at IS NULL
-             LIMIT 1`,
-            [id]
-        );
+        const product = await prisma.product.findFirst({
+            where: { id: productId, deletedAt: null },
+            select: { id: true, status: true }
+        });
 
-        if (!products.length) {
+        if (!product) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
             });
         }
-
-        const product = products[0];
 
         // Check if status is already the same
         if (product.status === normalizedStatus) {
@@ -985,13 +728,10 @@ const updateProductStatus = async (req, res) => {
         }
 
         // Update status
-        await prismaQuery(
-            `UPDATE products
-             SET status = ?,
-            updated_at = NOW()
-             WHERE id = ? `,
-            [normalizedStatus, id]
-        );
+        await prisma.product.update({
+            where: { id: productId },
+            data: { status: normalizedStatus, updatedAt: new Date() }
+        });
 
         return res.status(200).json({
             success: true,
@@ -1001,21 +741,15 @@ const updateProductStatus = async (req, res) => {
                 status: normalizedStatus
             },
             links: {
-                self: `/ api / v1 / products / ${id}`,
-                product: `/ api / v1 / products / ${id}`,
-                update: `/ api / v1 / products / ${id}`,
-                delete: `/ api / v1 / products / ${id}`,
+                self: `/api/v1/products/${id}`,
+                product: `/api/v1/products/${id}`,
+                update: `/api/v1/products/${id}`,
+                delete: `/api/v1/products/${id}`,
                 allProducts: "/api/v1/products"
             }
         });
-
     } catch (error) {
-        console.error("Update Product Status Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Update Product Status Error", "Failed to update product status.");
     }
 };
 
@@ -1024,18 +758,13 @@ const updateProductStatus = async (req, res) => {
  * @description Retrieve all products belonging to a category
  * @access Public
  */
-
 const getProductsByCategoryId = async (req, res) => {
     try {
         const { categoryId } = req.params;
+        const { page, limit, search, offset } = getPagination(req);
+        const parsedCategoryId = parseId(categoryId);
 
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 10;
-        const search = req.query.search || "";
-
-        const offset = (page - 1) * limit;
-
-        if (!categoryId || isNaN(categoryId)) {
+        if (!parsedCategoryId) {
             return res.status(400).json({
                 success: false,
                 message: "Valid category ID is required."
@@ -1043,115 +772,63 @@ const getProductsByCategoryId = async (req, res) => {
         }
 
         // Check category exists
-        const [category] = await prismaQuery(
-            `SELECT id, category_name
-             FROM categories
-             WHERE id = ?
-            LIMIT 1`,
-            [categoryId]
-        );
+        const category = await prisma.category.findUnique({
+            where: { id: parsedCategoryId },
+            select: { id: true, categoryName: true }
+        });
 
-        if (!category.length) {
+        if (!category) {
             return res.status(404).json({
                 success: false,
                 message: "Category not found."
             });
         }
 
-        let whereClause = `
-            WHERE p.category_id = ?
-            AND p.deleted_at IS NULL
-            `;
+        const where = {
+            categoryId: parsedCategoryId,
+            deletedAt: null,
+            ...buildSearchFilter(search)
+        };
 
-        const values = [categoryId];
+        const [totalProducts, products] = await Promise.all([
+            prisma.product.count({ where }),
+            prisma.product.findMany({
+                where,
+                orderBy: { createdAt: "desc" },
+                skip: offset,
+                take: limit,
+                include: { category: categorySelect }
+            })
+        ]);
 
-        if (search) {
-            whereClause += `
-                AND(
-                p.product_name LIKE ?
-                OR p.description LIKE ?
-                OR p.url_slug LIKE ?
-                )
-                `;
-
-            const keyword = `% ${search} % `;
-            values.push(keyword, keyword, keyword);
-        }
-
-        // Total products
-        const [countResult] = await prismaQuery(
-            `
-            SELECT COUNT(*) AS total
-            FROM products p
-            ${whereClause}
-            `,
-            values
-        );
-
-        const totalProducts = countResult[0].total;
         const totalPages = Math.ceil(totalProducts / limit);
-
-        // Fetch products
-        const [products] = await prismaQuery(
-            `
-            SELECT
-                p.*,
-            c.category_name,
-            c.url_slug AS category_slug
-            FROM products p
-            LEFT JOIN categories c
-                ON p.category_id = c.id
-            ${whereClause}
-            ORDER BY p.created_at DESC
-            LIMIT ?
-                OFFSET ?
-                    `,
-            [...values, limit, offset]
-        );
+        const basePath = `/api/v1/products/category/${categoryId}`;
 
         return res.status(200).json({
             success: true,
             message: products.length
                 ? "Products retrieved successfully."
                 : "No products found in this category.",
-
             meta: {
                 category_id: Number(categoryId),
-                category_name: category[0].category_name,
+                category_name: category.categoryName,
                 total_products: totalProducts,
                 total_pages: totalPages,
                 current_page: page,
                 per_page: limit,
                 search
             },
-
-            products: products,
-
+            products: serializeBigInt(products.map(formatProduct)),
             links: {
-                self: `/ api / v1 / products / category / ${categoryId} ? page = ${page} & limit=${limit} & search=${search}`,
-                category: `/ api / v1 / categories / ${categoryId}`,
+                category: `/api/v1/categories/${categoryId}`,
                 allProducts: "/api/v1/products",
-                first: `/ api / v1 / products / category / ${categoryId} ? page = 1 & limit=${limit} & search=${search}`,
-                last: `/ api / v1 / products / category / ${categoryId} ? page = ${totalPages} & limit=${limit} & search=${search}`,
-                previous: page > 1
-                    ? `/ api / v1 / products / category / ${categoryId} ? page = ${page - 1}& limit=${limit}& search=${search} `
-                    : null,
-                next: page < totalPages
-                    ? `/ api / v1 / products / category / ${categoryId}?page = ${page + 1}& limit=${limit}& search=${search} `
-                    : null
+                ...buildPaginationLinks(basePath, { page, limit, totalPages, search })
             }
         });
-
     } catch (error) {
-        console.error("Get Products By Category Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Get Products By Category Error", "Failed to retrieve category products.");
     }
 };
-
 
 /**
  * @method GET /api/v1/products/deleted
@@ -1160,65 +837,28 @@ const getProductsByCategoryId = async (req, res) => {
  */
 const getAllDeletedProducts = async (req, res) => {
     try {
-        const page = Number(req.query.page) || 1;
-        const limit = Number(req.query.limit) || 10;
-        const search = req.query.search || "";
+        const { page, limit, search, offset } = getPagination(req);
 
-        const offset = (page - 1) * limit;
+        const where = { deletedAt: { not: null }, ...buildSearchFilter(search) };
 
-        let whereClause = `WHERE p.deleted_at IS NOT NULL`;
-        let values = [];
+        const [totalProducts, products] = await Promise.all([
+            prisma.product.count({ where }),
+            prisma.product.findMany({
+                where,
+                orderBy: { deletedAt: "desc" },
+                skip: offset,
+                take: limit,
+                include: { category: categorySelect }
+            })
+        ]);
 
-        if (search) {
-            whereClause += `
-    AND(
-        p.product_name LIKE ?
-        OR p.description LIKE ?
-        OR p.url_slug LIKE ?
-                )
-        `;
-
-            const keyword = `% ${search}% `;
-            values.push(keyword, keyword, keyword);
-        }
-
-        // Total deleted products
-        const [countResult] = await prismaQuery(
-            `
-            SELECT COUNT(*) AS total
-            FROM products p
-            ${whereClause}
-    `,
-            values
-        );
-
-        const totalProducts = countResult[0].total;
         const totalPages = Math.ceil(totalProducts / limit);
-
-        // Fetch deleted products
-        const [products] = await prismaQuery(
-            `
-    SELECT
-    p.*,
-        c.category_name,
-        c.url_slug AS category_slug
-            FROM products p
-            LEFT JOIN categories c
-                ON p.category_id = c.id
-            ${whereClause}
-            ORDER BY p.deleted_at DESC
-    LIMIT ?
-        OFFSET ?
-            `,
-            [...values, limit, offset]
-        );
 
         return res.status(200).json({
             success: true,
             message: products.length
                 ? "Deleted products fetched successfully."
                 : "No deleted products found.",
-
             meta: {
                 total_deleted_products: totalProducts,
                 total_pages: totalPages,
@@ -1226,34 +866,13 @@ const getAllDeletedProducts = async (req, res) => {
                 per_page: limit,
                 search
             },
-
-            All_deleted_product: products,
-
-            links: {
-                self: `/ api / v1 / products / deleted ? page = ${page}& limit=${limit}& search=${search} `,
-                first: `/ api / v1 / products / deleted ? page = 1 & limit=${limit}& search=${search} `,
-                last: `/ api / v1 / products / deleted ? page = ${totalPages}& limit=${limit}& search=${search} `,
-                previous:
-                    page > 1
-                        ? `/ api / v1 / products / deleted ? page = ${page - 1}& limit=${limit}& search=${search} `
-                        : null,
-                next:
-                    page < totalPages
-                        ? `/ api / v1 / products / deleted ? page = ${page + 1}& limit=${limit}& search=${search} `
-                        : null
-            }
+            All_deleted_product: serializeBigInt(products.map(formatProduct)),
+            links: buildPaginationLinks("/api/v1/products/deleted", { page, limit, totalPages, search })
         });
-
     } catch (error) {
-        console.error("Get Deleted Products Error:", error);
-
-        return res.status(500).json({
-            success: false,
-            message: "Internal server error."
-        });
+        return handleError(res, error, "Get Deleted Products Error", "Failed to retrieve deleted products.");
     }
 };
-
 
 export {
     createProduct,
@@ -1265,4 +884,4 @@ export {
     deleteProduct,
     getProductsByCategoryId,
     getAllDeletedProducts
-}
+};
