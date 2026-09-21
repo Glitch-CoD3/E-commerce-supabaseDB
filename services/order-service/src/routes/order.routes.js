@@ -28,10 +28,6 @@ import {
     getInventoryAlerts,
     getCustomerAnalytics
 } from "../controllers/order.controller.js";
-import {
-    getOrdersByUserId as getOrdersByUserIdWithPrisma,
-    getOrderByOrderId as getOrderByOrderIdWithPrisma
-} from "../controllers/prisma-fetch.controller.js";
 
 const router = express.Router();
 
@@ -60,7 +56,7 @@ router.post("/buy-now", buyNowDirectly);
  * @description Get all orders of the authenticated user.
  * @access Private (User)
  */
-router.get("/", getOrdersByUserIdWithPrisma);
+router.get("/", getOrdersByUserId);
 
 /**
  * @method PATCH /api/v1/orders/:orderId/cancel
@@ -216,8 +212,8 @@ router.patch(
  * @description Get details of a specific order belonging to the authenticated user.
  * @access Private (User)
  */
-router.get("/details/", getOrderByOrderIdWithPrisma);
-router.get("/details/:orderId", getOrderByOrderIdWithPrisma);
+router.get("/details/", getOrderByOrderId);
+router.get("/details/:orderId", getOrderByOrderId);
 
 
 export default router;
