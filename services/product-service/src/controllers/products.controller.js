@@ -1,10 +1,10 @@
 import slugify from "slugify";
 import prisma from "../config/prisma.js";
-
+import { redis } from "../config/redis.config.js";
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
-
+const PRODUCTS_CACHE_TTL = 180; // 3 minutes, in seconds
 const PRISMA_ERRORS = {
     P2002: [409, "A record with this unique value already exists."],
     P2003: [400, "A related record referenced in the request does not exist."],
@@ -287,9 +287,28 @@ const createProduct = async (req, res) => {
  *              brand, category and aggregated variant data
  * @access Public
  */
+
+
 const getAllProducts = async (req, res) => {
     try {
         const { page, limit, search, offset } = getPagination(req);
+
+        const cacheKey = `products:list:${JSON.stringify({ page, limit, search })}`;
+
+        // Try cache first
+        try {
+            const cachedProducts = await redis.get(cacheKey);
+            if (cachedProducts) {
+                const parsed = typeof cachedProducts === "string"
+                    ? JSON.parse(cachedProducts)
+                    : cachedProducts;
+                console.log(`products served from Redis (key: ${cacheKey})`);
+                return res.status(200).json(parsed);
+            }
+            console.log(`Fetching products from database (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
+        }
 
         const where = { deletedAt: null, ...buildSearchFilter(search) };
 
@@ -324,7 +343,7 @@ const getAllProducts = async (req, res) => {
         const totalPages = Math.ceil(totalProducts / limit);
         const formattedProducts = products.map(formatListProduct);
 
-        return res.status(200).json({
+        const responsePayload = {
             success: true,
             message: formattedProducts.length
                 ? "Products fetched successfully."
@@ -338,7 +357,17 @@ const getAllProducts = async (req, res) => {
             },
             all_products: serializeBigInt(formattedProducts),
             links: buildPaginationLinks("/api/v1/products", { page, limit, totalPages, search })
-        });
+        };
+
+        // Cache the response for 3 minutes
+        try {
+            await redis.set(cacheKey, JSON.stringify(responsePayload), { EX: PRODUCTS_CACHE_TTL });
+
+        } catch (redisErr) {
+            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
+        }
+
+        return res.status(200).json(responsePayload);
     } catch (error) {
         return handleError(res, error, "Get All Products Error", "Failed to retrieve products.");
     }
@@ -359,6 +388,18 @@ const getProductById = async (req, res) => {
                 success: false,
                 message: "Valid product ID is required."
             });
+        }
+
+        const cacheKey = `product:${productId}`;
+
+        try {
+            const cachedProduct = RadioNodeList.get(cacheKey);
+            if (cachedProduct) {
+                console.log(`product served from Redis (key: ${cacheKey})`);
+                return res.status(200).json(JSON.parse(cachedProduct));
+            }
+        } catch (redisErr) {
+            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
         }
 
         const result = await prisma.product.findFirst({
@@ -407,6 +448,14 @@ const getProductById = async (req, res) => {
             colors: unique(variants.map(({ colors }) => colors)),
             images: buildImagesByColor(variants)
         };
+
+        //Cached product into Redis Database
+        try {
+            await redis.set(cacheKey, JSON.stringify(responsePayload), { EX: PRODUCTS_CACHE_TTL });
+            console.log(`Product cached for ${PRODUCT_CACHE_TTL}s (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
+        }
 
         return res.status(200).json({
             success: true,

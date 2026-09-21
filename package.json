@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@upstash/redis": "^1.39.0",
     "express-rate-limit": "^8.7.0",
     "ioredis": "^6.0.0",
     "rate-limit-redis": "^6.0.1"

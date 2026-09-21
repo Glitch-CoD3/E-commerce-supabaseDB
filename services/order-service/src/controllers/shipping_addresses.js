@@ -1,8 +1,10 @@
 import prisma from "../config/prisma.js";
+import { redis } from '../config/redis.config.js'
 
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
+const ADDRESS_CACHE_TTL= 300;
 
 const PRISMA_ERRORS = {
     P2002: [409, "A record with this unique value already exists."],
@@ -232,6 +234,19 @@ const getShippingAddress = async (req, res) => {
             return sendError(res, 400, "Valid user ID is required.");
         }
 
+        const cacheKey = `shipping:addresses:${user_id}`;
+
+        try {
+            const cachedAddresses = await redis.get(cacheKey);
+            if (cachedAddresses) {
+                console.log(`[Redis] Cache HIT — shipping addresses served from Redis (key: ${cacheKey})`);
+                return res.status(200).json(cachedAddresses);
+            }
+            console.log(`[Redis] Cache MISS — fetching shipping addresses from database (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
+        }
+
         const addresses = await prisma.shippingAddress.findMany({
             where: { userId: user_id },
             orderBy: { id: "asc" }
@@ -241,10 +256,19 @@ const getShippingAddress = async (req, res) => {
             return sendError(res, 404, "No shipping addresses found for this user.");
         }
 
-        return res.status(200).json({
+        const responsePayload = {
             success: true,
             addresses: serialize(addresses.map(formatShippingAddress))
-        });
+        };
+
+        try {
+            await redis.set(cacheKey, serialize(responsePayload), { ex: ADDRESS_CACHE_TTL });
+            console.log(`[Redis] Shipping addresses cached for ${ADDRESS_CACHE_TTL}s (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
+        }
+
+        return res.status(200).json(responsePayload);
     } catch (error) {
         return handleError(res, error, "Get Shipping Addresses Error", "Failed to retrieve shipping addresses.");
     }

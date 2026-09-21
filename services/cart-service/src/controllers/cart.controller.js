@@ -1,9 +1,10 @@
+import { redis } from "../config/redis.config.js";
 import prisma from "../config/prisma.js";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
-
+const CART_CACHE_TTL = 180;
 const PRISMA_ERRORS = {
     P2002: [409, "A record with this unique value already exists."],
     P2003: [400, "The operation conflicts with a related record."],
@@ -187,6 +188,7 @@ const addToCart = async (req, res) => {
  * @description Retrieve all cart items for the authenticated user.
  * @access Private (Authenticated User)
  */
+
 const getCart = async (req, res) => {
     try {
         const user_id = getUserId(req);
@@ -195,13 +197,26 @@ const getCart = async (req, res) => {
             return sendError(res, 401, "Authentication required.");
         }
 
+        const cacheKey = `cart:list:${user_id}`;
+
+        try {
+            const cachedCart = await redis.get(cacheKey);
+            if (cachedCart) {
+                console.log(`[Redis] Cache HIT — cart served from Redis (key: ${cacheKey})`);
+                return res.status(200).json(cachedCart);
+            }
+            console.log(`[Redis] Cache MISS — fetching cart from database (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
+        }
+
         const cart = await prisma.cart.findMany({
             where: { userId: user_id },
             orderBy: { createdAt: "desc" },
             select: cartSelect
         });
 
-        return res.status(200).json({
+        const responsePayload = {
             success: true,
             count: cart.length,
             data: serialize(cart.map(formatCartItem)),
@@ -209,7 +224,16 @@ const getCart = async (req, res) => {
                 add_to_cart: "/api/v1/cart",
                 clear_cart: "/api/v1/cart"
             }
-        });
+        };
+
+        try {
+            await redis.set(cacheKey, serialize(responsePayload), { ex: CART_CACHE_TTL });
+            console.log(`[Redis] Cart cached for ${CART_CACHE_TTL}s (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
+        }
+
+        return res.status(200).json(responsePayload);
     } catch (error) {
         return handleError(res, error, "Get Cart Error", "Failed to retrieve cart.");
     }

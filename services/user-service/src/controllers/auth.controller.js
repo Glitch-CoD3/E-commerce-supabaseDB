@@ -1,10 +1,13 @@
 import prisma from "../config/prisma.js";
 import bcrypt from "bcrypt";
+import { redis } from '../config/redis.config.js'
 import { generate_access_token, generate_refresh_token } from "../utils/token_generator_verify.js";
 import { hashPassword, comparePassword } from "../utils/hash_password.js";
 // import { sendEmail } from "../utils/email_service_otp_send.js";
 import { generateOTP, getOtpHtml } from "../utils/generate_otp.js";
 import { send_smtp_Mail } from "../utils/send_otp_smtp.js"
+
+const USER_CACHE_TTL = 600;
 
 const userResponse = (user) => ({
     id: Number(user.id),
@@ -603,6 +606,18 @@ const getUserById = async (req, res) => {
             });
         }
 
+        const cacheKey = `user:profile:${id}`;
+
+        try {
+            const cachedUser = await redis.get(cacheKey);
+            if (cachedUser) {
+                return res.status(200).json(cachedUser);
+            }
+
+        } catch (redisErr) {
+            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
+        }
+
         const user = await prisma.user.findUnique({
             where: {
                 id: BigInt(id)
@@ -621,14 +636,23 @@ const getUserById = async (req, res) => {
             });
         }
 
-        return res.status(200).json({
+        const responsePayload = {
             success: true,
             user: {
                 full_name: user.fullName,
                 email: user.email,
                 phone_number: user.phoneNumber
             }
-        });
+        };
+
+        try {
+            await redis.set(cacheKey, responsePayload, { ex: USER_CACHE_TTL });
+            console.log(`[Redis] User cached for ${USER_CACHE_TTL}s (key: ${cacheKey})`);
+        } catch (redisErr) {
+            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
+        }
+
+        return res.status(200).json(responsePayload);
 
     } catch (error) {
         console.error("Get User By ID Error:", error);

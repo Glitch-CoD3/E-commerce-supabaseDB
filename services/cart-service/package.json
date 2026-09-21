@@ -20,6 +20,7 @@
   "homepage": "https://github.com/Glitch-CoD3/E-commerce-web-app#readme",
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@upstash/redis": "^1.39.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
@@ -29,6 +30,5 @@
     "mysql2": "^3.22.5",
     "node-cron": "^4.5.0",
     "nodemon": "^3.1.14"
-    
   }
 }
