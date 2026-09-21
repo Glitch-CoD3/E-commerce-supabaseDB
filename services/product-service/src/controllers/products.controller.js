@@ -1,5 +1,37 @@
-import DB from "../config/db.config.js";
+import prisma from "../config/prisma.js";
 import slugify from "slugify";
+
+const query = async (sql, values = []) => {
+    let parameterIndex = 0;
+    const statement = sql
+        .replace(/\bIFNULL\s*\(/gi, "COALESCE(")
+        .replace(/\bNOW\s*\(\s*\)/gi, "CURRENT_TIMESTAMP")
+        .replace(/\?/g, () => `$${++parameterIndex}`);
+    const command = statement.trim().split(/\s+/)[0].toUpperCase();
+
+    if (command === "SELECT" || command === "WITH") {
+        const rows = await prisma.$queryRawUnsafe(statement, ...values);
+        return [rows.map((row) => Object.fromEntries(
+            Object.entries(row).map(([key, value]) => [
+                key,
+                typeof value === "bigint" ? Number(value) : value
+            ])
+        ))];
+    }
+
+    if (command === "INSERT") {
+        const rows = await prisma.$queryRawUnsafe(
+            `${statement.trim().replace(/;$/, "")} RETURNING id`,
+            ...values
+        );
+        return [{ insertId: rows[0]?.id == null ? undefined : Number(rows[0].id) }];
+    }
+
+    const affectedRows = await prisma.$executeRawUnsafe(statement, ...values);
+    return [{ affectedRows }];
+};
+
+const prismaQuery = query;
 
 /**
  * @method POST /api/v1/products
@@ -40,7 +72,7 @@ const createProduct = async (req, res) => {
         }
 
         // Check category exists
-        const [category] = await DB.promise().query(
+        const [category] = await query(
             `SELECT id
              FROM categories
              WHERE id = ?
@@ -57,7 +89,7 @@ const createProduct = async (req, res) => {
 
 
         // Check brand exists
-        const [brand] = await DB.promise().query(
+        const [brand] = await query(
             `SELECT id, brand_name
              FROM brands
              WHERE id = ?
@@ -82,7 +114,7 @@ const createProduct = async (req, res) => {
         });
 
         // Check slug uniqueness
-        const [existingSlug] = await DB.promise().query(
+        const [existingSlug] = await query(
             `SELECT id
              FROM products
              WHERE url_slug = ?
@@ -97,7 +129,7 @@ const createProduct = async (req, res) => {
         const productStatus = Number(stock_quantity) > 0 ? "active" : "inactive";
 
 
-        const [result] = await DB.promise().query(
+        const [result] = await query(
             `INSERT INTO products
             (
                 category_id,
@@ -185,7 +217,7 @@ const getAllProducts = async (req, res) => {
         }
 
         // Total products count
-        const [countResult] = await DB.promise().query(
+        const [countResult] = await prismaQuery(
             `
             SELECT COUNT(*) AS total
             FROM products p
@@ -198,7 +230,7 @@ const getAllProducts = async (req, res) => {
         const totalPages = Math.ceil(totalProducts / limit);
 
         // Fetch products with aggregated sizes, colors, and images
-        const [rows] = await DB.promise().query(
+        const [rows] = await prismaQuery(
             `
           SELECT
     p.id,
@@ -472,7 +504,7 @@ const getProductById = async (req, res) => {
             });
         }
 
-        const [rows] = await DB.promise().query(
+        const [rows] = await prismaQuery(
             `
             SELECT 
                 p.id,
@@ -588,7 +620,7 @@ const getProductBySlug = async (req, res) => {
             });
         }
 
-        const [product] = await DB.promise().query(
+        const [product] = await prismaQuery(
             `
             SELECT
                 p.*,
@@ -654,7 +686,7 @@ const updateProduct = async (req, res) => {
         }
 
         // Check product exists
-        const [products] = await DB.promise().query(
+        const [products] = await prismaQuery(
             `SELECT *
         FROM products
              WHERE id = ?
@@ -699,7 +731,7 @@ const updateProduct = async (req, res) => {
 
                 case "category_id": {
 
-                    const [category] = await DB.promise().query(
+                    const [category] = await prismaQuery(
                         `SELECT id
                          FROM categories
                          WHERE id = ?
@@ -733,7 +765,7 @@ const updateProduct = async (req, res) => {
                             trim: true
                         });
 
-                        const [slugExists] = await DB.promise().query(
+                        const [slugExists] = await prismaQuery(
                             `SELECT id
                              FROM products
                              WHERE url_slug = ?
@@ -769,14 +801,14 @@ const updateProduct = async (req, res) => {
         updateFields.push("updated_at = NOW()");
         values.push(id);
 
-        await DB.promise().query(
+        await prismaQuery(
             `UPDATE products
              SET ${updateFields.join(", ")}
              WHERE id = ? `,
             values
         );
 
-        const [updatedProducts] = await DB.promise().query(
+        const [updatedProducts] = await prismaQuery(
             `SELECT
                 p.*,
             c.category_name,
@@ -830,7 +862,7 @@ const deleteProduct = async (req, res) => {
         }
 
         // Check if product exists
-        const [product] = await DB.promise().query(
+        const [product] = await prismaQuery(
             `SELECT id, product_name
              FROM products
              WHERE id = ?
@@ -847,7 +879,7 @@ const deleteProduct = async (req, res) => {
         }
 
         // Soft delete
-        await DB.promise().query(
+        await prismaQuery(
             `UPDATE products
              SET deleted_at = NOW()
              WHERE id = ? `,
@@ -922,7 +954,7 @@ const updateProductStatus = async (req, res) => {
         }
 
         // Check product exists
-        const [products] = await DB.promise().query(
+        const [products] = await prismaQuery(
             `SELECT id, status
              FROM products
              WHERE id = ?
@@ -953,7 +985,7 @@ const updateProductStatus = async (req, res) => {
         }
 
         // Update status
-        await DB.promise().query(
+        await prismaQuery(
             `UPDATE products
              SET status = ?,
             updated_at = NOW()
@@ -1011,7 +1043,7 @@ const getProductsByCategoryId = async (req, res) => {
         }
 
         // Check category exists
-        const [category] = await DB.promise().query(
+        const [category] = await prismaQuery(
             `SELECT id, category_name
              FROM categories
              WHERE id = ?
@@ -1047,7 +1079,7 @@ const getProductsByCategoryId = async (req, res) => {
         }
 
         // Total products
-        const [countResult] = await DB.promise().query(
+        const [countResult] = await prismaQuery(
             `
             SELECT COUNT(*) AS total
             FROM products p
@@ -1060,7 +1092,7 @@ const getProductsByCategoryId = async (req, res) => {
         const totalPages = Math.ceil(totalProducts / limit);
 
         // Fetch products
-        const [products] = await DB.promise().query(
+        const [products] = await prismaQuery(
             `
             SELECT
                 p.*,
@@ -1151,7 +1183,7 @@ const getAllDeletedProducts = async (req, res) => {
         }
 
         // Total deleted products
-        const [countResult] = await DB.promise().query(
+        const [countResult] = await prismaQuery(
             `
             SELECT COUNT(*) AS total
             FROM products p
@@ -1164,7 +1196,7 @@ const getAllDeletedProducts = async (req, res) => {
         const totalPages = Math.ceil(totalProducts / limit);
 
         // Fetch deleted products
-        const [products] = await DB.promise().query(
+        const [products] = await prismaQuery(
             `
     SELECT
     p.*,

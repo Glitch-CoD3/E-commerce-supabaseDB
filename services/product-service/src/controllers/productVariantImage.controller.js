@@ -1,4 +1,4 @@
-import DB from '../config/db.config.js'
+import prisma from '../config/prisma.js'
 import { uploadImageToCloudinary } from "../utils/cloudinary.js";
 import { deleteImageFromCloudinary } from "../utils/cloudinary.js";
 
@@ -37,33 +37,21 @@ const uploadVariantImage = async (req, res) => {
         }
 
         // Get next sort_order
-        const [rows] = await DB.promise().query(
-            `SELECT IFNULL(MAX(sort_order),0)+1 AS sort_order
-             FROM variant_images
-             WHERE product_variant_id=?`,
-            [variantId]
-        );
-
-        const sortOrder = rows[0].sort_order;
+        const lastImage = await prisma.variantImage.findFirst({
+            where: { productVariantId: BigInt(variantId) },
+            orderBy: { sortOrder: "desc" },
+            select: { sortOrder: true }
+        });
+        const sortOrder = (lastImage?.sortOrder || 0) + 1;
 
         // Save image
-        await DB.promise().query(
-            `INSERT INTO variant_images
-            (
-                product_variant_id,
-                image_url,
-                sort_order
-            )
-            VALUES
-            (
-                ?,?,?
-            )`,
-            [
-                variantId,
-                result.secure_url,
+        await prisma.variantImage.create({
+            data: {
+                productVariantId: BigInt(variantId),
+                imageUrl: result.secure_url,
                 sortOrder
-            ]
-        );
+            }
+        });
 
         return res.status(201).json({
             success: true,
@@ -91,24 +79,24 @@ const getVariantImages = async (req, res) => {
 
         const { variantId } = req.params;
 
-        const [images] = await DB.promise().query(
-            `SELECT
-                id,
-                product_variant_id,
-                image_url,
-                sort_order,
-                created_at
-            FROM variant_images
-            WHERE product_variant_id = ?
-            AND deleted_at IS NULL
-            ORDER BY sort_order ASC`,
-            [variantId]
-        );
+        const images = await prisma.variantImage.findMany({
+            where: { productVariantId: BigInt(variantId), deletedAt: null },
+            orderBy: { sortOrder: "asc" },
+            select: {
+                id: true,
+                productVariantId: true,
+                imageUrl: true,
+                sortOrder: true,
+                createdAt: true
+            }
+        });
 
         return res.status(200).json({
             success: true,
             count: images.length,
-            data: images
+            data: JSON.parse(JSON.stringify(images, (_, value) =>
+                typeof value === "bigint" ? Number(value) : value
+            ))
         });
 
     } catch (error) {
@@ -130,24 +118,19 @@ const deleteVariantImage = async (req, res) => {
         const { imageId } = req.params;
 
         // Find image
-        const [rows] = await DB.promise().query(
-            `SELECT
-                image_url
-            FROM variant_images
-            WHERE id = ?
-            AND deleted_at IS NULL`,
-            [imageId]
-        );
+        const image = await prisma.variantImage.findFirst({
+            where: { id: BigInt(imageId), deletedAt: null },
+            select: { imageUrl: true }
+        });
 
-        if (rows.length === 0) {
+        if (!image) {
             return res.status(404).json({
                 success: false,
                 message: "Image not found."
             });
         }
-        console.log(rows[0])
         // Delete from Cloudinary
-        const cloudinaryResult = await deleteImageFromCloudinary(rows[0].image_url);
+        const cloudinaryResult = await deleteImageFromCloudinary(image.imageUrl);
 
         if (!cloudinaryResult || cloudinaryResult.result !== "ok") {
             return res.status(500).json({
@@ -157,11 +140,7 @@ const deleteVariantImage = async (req, res) => {
         }
 
         // Soft delete
-        await DB.promise().query(
-            `DELETE FROM variant_images
-            WHERE id = ?`,
-            [imageId]
-        );
+        await prisma.variantImage.delete({ where: { id: BigInt(imageId) } });
 
         return res.status(200).json({
             success: true,

@@ -1,7 +1,16 @@
-import DB from "../config/db.config.js";
+import prisma from "../config/prisma.js";
 
-// Assuming DB connection is imported:
-// const DB = require('../config/db');
+const serializeBigInt = (data) => JSON.parse(JSON.stringify(data, (_, value) =>
+    typeof value === "bigint" ? Number(value) : value
+));
+
+const parseBrandId = (id) => {
+    if (!id || !/^\d+$/.test(id)) {
+        return null;
+    }
+
+    return BigInt(id);
+};
 
 /**
  * @method POST /api/v1/brands
@@ -21,12 +30,12 @@ const createBrand = async (req, res) => {
         }
 
         // Check if brand already exists
-        const [existing] = await DB.promise().query(
-            'SELECT id FROM brands WHERE brand_name = ?',
-            [brand_name]
-        );
+        const existing = await prisma.brand.findUnique({
+            where: { brandName: brand_name },
+            select: { id: true }
+        });
 
-        if (existing.length > 0) {
+        if (existing) {
             return res.status(409).json({
                 success: false,
                 message: 'Brand with this name already exists.',
@@ -34,16 +43,16 @@ const createBrand = async (req, res) => {
         }
 
         // Insert new brand
-        const [result] = await DB.promise().query(
-            'INSERT INTO brands (brand_name, logo) VALUES (?, ?)',
-            [brand_name, logo || null]
-        );
+        const createdBrand = await prisma.brand.create({
+            data: { brandName: brand_name, logo: logo || null },
+            select: { id: true }
+        });
 
         return res.status(201).json({
             success: true,
             message: 'Brand created successfully.',
             data: {
-                id: result.insertId,
+                id: Number(createdBrand.id),
                 brand_name,
                 logo: logo || null,
             },
@@ -72,15 +81,11 @@ const getAllBrands = async (req, res) => {
         const searchParam = `%${search}%`;
 
         // Fetch brands and total count
-        const [brands] = await DB.promise().query(
-            'SELECT * FROM brands WHERE brand_name LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?',
-            [searchParam, limit, offset]
-        );
-
-        const [[{ total }]] = await DB.promise().query(
-            'SELECT COUNT(*) AS total FROM brands WHERE brand_name LIKE ?',
-            [searchParam]
-        );
+        const where = search ? { brandName: { contains: search, mode: "insensitive" } } : {};
+        const [brands, total] = await Promise.all([
+            prisma.brand.findMany({ where, orderBy: { id: "desc" }, skip: offset, take: limit }),
+            prisma.brand.count({ where })
+        ]);
 
         return res.status(200).json({
             success: true,
@@ -91,7 +96,7 @@ const getAllBrands = async (req, res) => {
                 totalPages: Math.ceil(total / limit),
                 pageSize: limit,
             },
-            data: brands,
+            data: serializeBigInt(brands),
         });
     } catch (error) {
         return res.status(500).json({
@@ -110,13 +115,18 @@ const getAllBrands = async (req, res) => {
 const getBrandById = async (req, res) => {
     try {
         const { id } = req.params;
+        const brandId = parseBrandId(id);
 
-        const [rows] = await DB.promise().query(
-            'SELECT * FROM brands WHERE id = ?',
-            [id]
-        );
+        if (brandId === null) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid brand ID is required.',
+            });
+        }
 
-        if (rows.length === 0) {
+        const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+
+        if (!brand) {
             return res.status(404).json({
                 success: false,
                 message: 'Brand not found.',
@@ -126,7 +136,7 @@ const getBrandById = async (req, res) => {
         return res.status(200).json({
             success: true,
             message: 'Brand retrieved successfully.',
-            data: rows[0],
+            data: serializeBigInt(brand),
         });
     } catch (error) {
         return res.status(500).json({
@@ -148,14 +158,19 @@ const updateBrand = async (req, res) => {
     try {
         const { id } = req.params;
         const { brand_name, logo } = req.body;
+        const brandId = parseBrandId(id);
+
+        if (brandId === null) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid brand ID is required.',
+            });
+        }
 
         // 1. Check if brand exists
-        const [existing] = await DB.promise().query(
-            'SELECT * FROM brands WHERE id = ?',
-            [id]
-        );
+        const existing = await prisma.brand.findUnique({ where: { id: brandId } });
 
-        if (existing.length === 0) {
+        if (!existing) {
             return res.status(404).json({
                 success: false,
                 message: 'Brand not found.',
@@ -163,23 +178,20 @@ const updateBrand = async (req, res) => {
         }
 
         // 2. Build dynamic update arrays only for non-empty values
-        const fields = [];
-        const values = [];
+        const data = {};
 
         // Only update brand_name if provided and not just empty whitespace
         if (brand_name !== undefined && brand_name.trim() !== '') {
-            fields.push('brand_name = ?');
-            values.push(brand_name.trim());
+            data.brandName = brand_name.trim();
         }
 
         // Only update logo if provided and not just empty whitespace
         if (logo !== undefined && logo.trim() !== '') {
-            fields.push('logo = ?');
-            values.push(logo.trim());
+            data.logo = logo.trim();
         }
 
         // 3. If no valid non-empty fields were passed, return early
-        if (fields.length === 0) {
+        if (Object.keys(data).length === 0) {
             return res.status(400).json({
                 success: false,
                 message: 'No valid data provided to update.',
@@ -187,21 +199,15 @@ const updateBrand = async (req, res) => {
         }
 
         // 4. Execute update query
-        values.push(id);
-        const sql = `UPDATE brands SET ${fields.join(', ')} WHERE id = ?`;
-
-        await DB.promise().query(sql, values);
-
-        // 5. Fetch and return updated record
-        const [updatedBrand] = await DB.promise().query(
-            'SELECT * FROM brands WHERE id = ?',
-            [id]
-        );
+        const updatedBrand = await prisma.brand.update({
+            where: { id: brandId },
+            data
+        });
 
         return res.status(200).json({
             success: true,
             message: 'Brand updated successfully.',
-            data: updatedBrand[0],
+            data: serializeBigInt(updatedBrand),
         });
     } catch (error) {
         return res.status(500).json({
@@ -220,13 +226,18 @@ const updateBrand = async (req, res) => {
 const deleteBrand = async (req, res) => {
     try {
         const { id } = req.params;
+        const brandId = parseBrandId(id);
 
-        const [result] = await DB.promise().query(
-            'DELETE FROM brands WHERE id = ?',
-            [id]
-        );
+        if (brandId === null) {
+            return res.status(400).json({
+                success: false,
+                message: 'Valid brand ID is required.',
+            });
+        }
 
-        if (result.affectedRows === 0) {
+        const result = await prisma.brand.deleteMany({ where: { id: brandId } });
+
+        if (result.count === 0) {
             return res.status(404).json({
                 success: false,
                 message: 'Brand not found.',

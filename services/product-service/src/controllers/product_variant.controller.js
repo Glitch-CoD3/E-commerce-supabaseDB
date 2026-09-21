@@ -1,4 +1,8 @@
-import DB from "../config/db.config.js";
+import prisma from "../config/prisma.js";
+
+const serialize = (data) => JSON.parse(JSON.stringify(data, (_, value) =>
+    typeof value === "bigint" ? Number(value) : value
+));
 
 /**
  * @method POST /api/v1/product-variants
@@ -54,22 +58,19 @@ const createProductVariant = async (req, res) => {
         // ===============================
         // Check Product
         // ===============================
-        const [product] = await DB.promise().query(
-            `SELECT id, status, stock_quantity
-             FROM products
-             WHERE id = ?
-             AND deleted_at IS NULL`,
-            [product_id]
-        );
+        const product = await prisma.product.findFirst({
+            where: { id: BigInt(product_id), deletedAt: null },
+            select: { id: true, status: true, stockQuantity: true }
+        });
 
-        if (product.length === 0) {
+        if (!product) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
             });
         }
 
-        if (product[0].status !== "active") {
+        if (product.status !== "active") {
             return res.status(400).json({
                 success: false,
                 message: "Cannot create variant for an inactive product."
@@ -79,16 +80,11 @@ const createProductVariant = async (req, res) => {
         // ===============================
         // Prevent Duplicate Variant
         // ===============================
-        const [exists] = await DB.promise().query(
-            `SELECT id
-             FROM product_variants
-             WHERE product_id = ? AND colors = ?`,
-            [
-                product_id,
-                color
-            ]
-        );
-        if (exists.length > 0) {
+        const exists = await prisma.productVariant.findFirst({
+            where: { productId: BigInt(product_id), colors: color },
+            select: { id: true }
+        });
+        if (exists) {
             return res.status(409).json({
                 success: false,
                 message: "This variant already exists."
@@ -98,47 +94,27 @@ const createProductVariant = async (req, res) => {
         // ===============================
         // Insert Variant
         // ===============================
-        const [result] = await DB.promise().query(
-            `INSERT INTO product_variants
-            (
-                product_id,
-                colors,
-                sizes,
+        const createdVariant = await prisma.productVariant.create({
+            data: {
+                productId: BigInt(product_id),
+                colors: color,
+                sizes: size || null,
                 price,
-                stock_quantity
-            )
-            VALUES (?, ?, ?, ?, ?)`,
-            [
-                product_id,
-                color,
-                size,
-                price,
-                stock_quantity
-            ]
-        );
+                stockQuantity: Number(stock_quantity)
+            }
+        });
 
         // ===============================
         // Fetch Created Variant
         // ===============================
-        const [variant] = await DB.promise().query(
-            `SELECT
-                id,
-                product_id,
-                colors,
-                sizes,
-                price,
-                stock_quantity
-             FROM product_variants
-             WHERE id = ?`,
-            [result.insertId]
-        );
+        const variant = createdVariant;
 
         return res.status(201).json({
             success: true,
             message: "Product variant created successfully.",
-            created_varient: variant[0],
+            created_varient: serialize(variant),
             links: {
-                self: `/api/v1/product-variants/${variant[0].id}`,
+                self: `/api/v1/product-variants/${variant.id}`,
                 product: `/api/v1/products/${product_id}`,
                 all_variants: `/api/v1/products/${product_id}/variants`
             }
@@ -181,49 +157,31 @@ const getAllProductVariantsWithProductDetails = async (req, res) => {
         // ===============================
         // Build Query
         // ===============================
-        let whereClause = "WHERE p.deleted_at IS NULL";
-        let params = [];
-
-        if (product_id) {
-            whereClause += " AND pv.product_id = ?";
-            params.push(product_id);
-        }
+        const where = {
+            deletedAt: null,
+            ...(product_id ? { productId: BigInt(product_id) } : {})
+        };
 
         // ===============================
         // Total Count
         // ===============================
-        const [countResult] = await DB.promise().query(
-            `SELECT COUNT(*) AS total
-             FROM product_variants pv
-             INNER JOIN products p
-                ON pv.product_id = p.id
-             ${whereClause}`,
-            params
-        );
-
-        const total = countResult[0].total;
+        const total = await prisma.productVariant.count({
+            where: { ...where, product: { deletedAt: null } }
+        });
 
         // ===============================
         // Get Variants
         // ===============================
-        const [variants] = await DB.promise().query(
-            `SELECT
-                pv.id,
-                pv.product_id,
-                p.product_name,
-                pv.colors,
-                pv.sizes,
-                pv.price,
-                pv.stock_quantity,
-                p.status AS product_status
-            FROM product_variants pv
-            INNER JOIN products p
-                ON pv.product_id = p.id
-            ${whereClause}
-            ORDER BY pv.id DESC
-            LIMIT ? OFFSET ?`,
-            [...params, limit, offset]
-        );
+        const variants = await prisma.productVariant.findMany({
+            where: { ...where, product: { deletedAt: null } },
+            orderBy: { id: "desc" }, skip: offset, take: limit,
+            include: { product: { select: { productName: true, status: true } } }
+        });
+        const formattedVariants = serialize(variants.map(({ product, ...variant }) => ({
+            ...variant,
+            product_name: product.productName,
+            product_status: product.status
+        })));
 
         // ===============================
         // Response
@@ -235,7 +193,7 @@ const getAllProductVariantsWithProductDetails = async (req, res) => {
             page,
             limit,
             totalPages: Math.ceil(total / limit),
-            Total_vatient_with_productDetails: variants,
+            Total_vatient_with_productDetails: formattedVariants,
             links: {
                 self: `/api/v1/product-variants?page=${page}&limit=${limit}`,
                 next:
@@ -282,39 +240,11 @@ const getAllProductVariants = async (req, res) => {
         }
 
         // Build Query
-        let whereClause = "";
-        let params = [];
-
-        if (product_id) {
-            whereClause = "WHERE product_id = ?";
-            params.push(product_id);
-        }
-
-        // Total Count
-        const [countResult] = await DB.promise().query(
-            `SELECT COUNT(*) AS total
-             FROM product_variants
-             ${whereClause}`,
-            params
-        );
-
-        const total = countResult[0].total;
-
-        // Get Variants
-        const [variants] = await DB.promise().query(
-            `SELECT
-                id,
-                product_id,
-                colors,
-                sizes,
-                price,
-                stock_quantity
-            FROM product_variants
-            ${whereClause}
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?`,
-            [...params, limit, offset]
-        );
+        const where = product_id ? { productId: BigInt(product_id) } : {};
+        const total = await prisma.productVariant.count({ where });
+        const variants = await prisma.productVariant.findMany({
+            where, orderBy: { id: "desc" }, skip: offset, take: limit
+        });
 
         // Response
         return res.status(200).json({
@@ -324,7 +254,7 @@ const getAllProductVariants = async (req, res) => {
             page,
             limit,
             totalPages: Math.ceil(total / limit),
-            all_product_varients: variants, // Fixed typo from 'vatient' to 'variants'
+            all_product_varients: serialize(variants), // Fixed typo from 'vatient' to 'variants'
             links: {
                 self: `/api/v1/product-variants?page=${page}&limit=${limit}${product_id ? `&product_id=${product_id}` : ''}`,
                 next:
@@ -366,21 +296,13 @@ const getProductVariantById = async (req, res) => {
         // ===============================
         // Get Variant
         // ===============================
-        const [variant] = await DB.promise().query(
-            `SELECT
-            id,
-            product_id,
-            colors,
-            sizes,
-            price,
-            stock_quantity
-            FROM product_variants WHERE id =?`,
-            [id]
-        )
+        const variant = await prisma.productVariant.findUnique({
+            where: { id: BigInt(id) }
+        });
         // ===============================
         // Check Exists
         // ===============================
-        if (variant.length === 0) {
+        if (!variant) {
             return res.status(404).json({
                 success: false,
                 message: "Product variant not found."
@@ -393,11 +315,11 @@ const getProductVariantById = async (req, res) => {
         return res.status(200).json({
             success: true,
             message: "Product variant retrieved successfully.",
-            product_varient: variant[0],
+            product_varient: serialize(variant),
             links: {
-                self: `/api/v1/product-variants/${variant[0].id}`,
-                product: `/api/v1/products/${variant[0].product_id}`,
-                all_variants: `/api/v1/products/${variant[0].product_id}/variants`
+                self: `/api/v1/product-variants/${variant.id}`,
+                product: `/api/v1/products/${variant.productId}`,
+                all_variants: `/api/v1/products/${variant.productId}/variants`
             }
         });
 
@@ -430,12 +352,11 @@ const getVariantsByProductId = async (req, res) => {
         // ===========================
         // Check Product Existence
         // ===========================
-        const [product] = await DB.promise().query(
-            `SELECT id FROM products WHERE id = ?`,
-            [productId]
-        );
+        const product = await prisma.product.findUnique({
+            where: { id: BigInt(productId) }, select: { id: true }
+        });
 
-        if (product.length === 0) {
+        if (!product) {
             return res.status(404).json({
                 success: false,
                 message: "Product not found."
@@ -445,13 +366,9 @@ const getVariantsByProductId = async (req, res) => {
         // ===========================
         // Fetch All Variants
         // ===========================
-        const [variants] = await DB.promise().query(
-            `SELECT id, product_id, colors, sizes, price, stock_quantity, created_at, updated_at
-             FROM product_variants
-             WHERE product_id = ?
-             ORDER BY id ASC`,
-            [productId]
-        );
+        const variants = await prisma.productVariant.findMany({
+            where: { productId: BigInt(productId) }, orderBy: { id: "asc" }
+        });
 
         // Optional: Return empty array or 404 depending on your preferred API design
         if (variants.length === 0) {
@@ -466,7 +383,7 @@ const getVariantsByProductId = async (req, res) => {
             success: true,
             message: "Product variants retrieved successfully.",
             count: variants.length,
-            varients: variants,
+            varients: serialize(variants),
             links: {
                 self: `/api/v1/products/${productId}/variants`,
                 product: `/api/v1/products/${productId}`
@@ -503,14 +420,11 @@ const updateProductVariant = async (req, res) => {
         // ===========================
         // Check Variant Exists
         // ===========================
-        const [variant] = await DB.promise().query(
-            `SELECT id, product_id, colors, sizes, price, stock_quantity
-             FROM product_variants
-             WHERE id = ?`,
-            [id]
-        );
+        const variant = await prisma.productVariant.findUnique({
+            where: { id: BigInt(id) }
+        });
 
-        if (variant.length === 0) {
+        if (!variant) {
             return res.status(404).json({
                 success: false,
                 message: "Product variant not found."
@@ -561,29 +475,19 @@ const updateProductVariant = async (req, res) => {
         // ===========================
         // Check Duplicate Variant (Color + Size Combination)
         // ===========================
-        const targetColor = isValid(color) ? color.trim() : variant[0].colors;
-        const targetSize = isValid(size) ? String(size).trim().toUpperCase() : variant[0].sizes;
+        const targetColor = isValid(color) ? color.trim() : variant.colors;
+        const targetSize = isValid(size) ? String(size).trim().toUpperCase() : variant.sizes;
 
         // Perform duplicate check if either color or size is being updated
-        if ((isValid(color) && targetColor !== variant[0].colors) ||
-            (isValid(size) && targetSize !== variant[0].sizes)) {
-
-            const [exists] = await DB.promise().query(
-                `SELECT id
-                 FROM product_variants
-                 WHERE product_id = ?
-                 AND colors = ?
-                 AND sizes = ?
-                 AND id != ?`,
-                [
-                    variant[0].product_id,
-                    targetColor,
-                    targetSize,
-                    id
-                ]
-            );
-
-            if (exists.length > 0) {
+        if ((isValid(color) && targetColor !== variant.colors) ||
+            (isValid(size) && targetSize !== variant.sizes)) {
+            const exists = await prisma.productVariant.findFirst({
+                where: {
+                    productId: variant.productId, colors: targetColor,
+                    sizes: targetSize, NOT: { id: BigInt(id) }
+                }, select: { id: true }
+            });
+            if (exists) {
                 return res.status(409).json({
                     success: false,
                     message: `A variant with color '${targetColor}' and size '${targetSize}' already exists for this product.`
@@ -594,53 +498,36 @@ const updateProductVariant = async (req, res) => {
         // ===========================
         // Dynamic Update Query
         // ===========================
-        const updates = [];
-        const params = [];
+        const data = {};
 
         if (isValid(color)) {
-            updates.push("colors = ?");
-            params.push(color.trim());
+            data.colors = color.trim();
         }
         if (isValid(size)) {
-            updates.push("sizes = ?");
-            params.push(String(size).trim().toUpperCase());
+            data.sizes = String(size).trim().toUpperCase();
         }
         if (isValid(price)) {
-            updates.push("price = ?");
-            params.push(Number(price));
+            data.price = Number(price);
         }
         if (isValid(stock_quantity)) {
-            updates.push("stock_quantity = ?");
-            params.push(Number(stock_quantity));
+            data.stockQuantity = Number(stock_quantity);
         }
 
-        params.push(id);
-
-        await DB.promise().query(
-            `UPDATE product_variants
-             SET ${updates.join(", ")}
-             WHERE id = ?`,
-            params
-        );
+        await prisma.productVariant.update({ where: { id: BigInt(id) }, data });
 
         // ===========================
         // Return Updated Variant
         // ===========================
-        const [updated] = await DB.promise().query(
-            `SELECT *
-             FROM product_variants
-             WHERE id = ?`,
-            [id]
-        );
+        const updated = await prisma.productVariant.findUnique({ where: { id: BigInt(id) } });
 
         return res.status(200).json({
             success: true,
             message: "Product variant updated successfully.",
-            updated_varient: updated[0],
+            updated_varient: serialize(updated),
             links: {
                 self: `/api/v1/product-variants/${id}`,
-                product: `/api/v1/products/${updated[0].product_id}`,
-                all_variants: `/api/v1/products/${updated[0].product_id}/variants`
+                product: `/api/v1/products/${updated.productId}`,
+                all_variants: `/api/v1/products/${updated.productId}/variants`
             }
         });
 
@@ -667,14 +554,11 @@ const deleteProductVariant = async (req, res) => {
         // ===========================
         // Check Variant Exists
         // ===========================
-        const [variant] = await DB.promise().query(
-            `SELECT id
-             FROM product_variants
-             WHERE id = ?`,
-            [id]
-        );
+        const variant = await prisma.productVariant.findUnique({
+            where: { id: BigInt(id) }, select: { id: true }
+        });
 
-        if (variant.length === 0) {
+        if (!variant) {
             return res.status(404).json({
                 success: false,
                 message: "Product variant not found."
@@ -684,11 +568,7 @@ const deleteProductVariant = async (req, res) => {
         // ===========================
         // Delete Variant
         // ===========================
-        await DB.promise().query(
-            `DELETE FROM product_variants
-             WHERE id = ?`,
-            [id]
-        );
+        await prisma.productVariant.delete({ where: { id: BigInt(id) } });
 
         return res.status(200).json({
             success: true,
