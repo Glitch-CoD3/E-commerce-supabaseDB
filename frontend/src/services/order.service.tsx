@@ -142,8 +142,16 @@ export const getCustomerAnalytics = async () => {
 
 
 // 16. Get all paid Customer 
-export const getAllPaidCustomers = async () => {
-  const response = await AxiosInstance.get("/order/admin/analytics/customer-metrics/paid-customers");
+export const getAllPaidCustomers = async (page: number = 1, limit: number = 10) => {
+  const response = await AxiosInstance.get(
+    "/order/admin/analytics/customer-metrics/paid-customers",
+    {
+      params: {
+        page,
+        limit,
+      },
+    }
+  );
   return response.data;
 };
 

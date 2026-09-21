@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   CategoryType, 
   CreateCategoryInput,
@@ -16,6 +16,7 @@ type CategoryForm = {
 };
 
 type CategoryTabProps = {
+  isActive?: boolean;
   categories?: CategoryType[];
   onSave?: (data: CategoryForm, id: string | null) => void;
   onDelete?: (id: string) => void;
@@ -34,7 +35,11 @@ const generateSlug = (text: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
+const getName = (cat: CategoryType) => cat.categoryName || cat.category_name || '';
+const getParentId = (cat: CategoryType) => cat.parentCategoryId ?? cat.parent_category_id ?? null;
+
 export default function CategoryTab({
+  isActive = true,
   categories: initialCategories = [],
   onSave,
   onDelete,
@@ -48,14 +53,14 @@ export default function CategoryTab({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Fetch API handler
+  const hasFetchedRef = useRef(false);
+
   const fetchCategories = async () => {
     setLoading(true);
     try {
       const response = await getCategories();
-      
-      setCategoryList(response.All_categories);
-      
+      setCategoryList(response.All_categories || []);
+      hasFetchedRef.current = true;
     } catch (error) {
       console.error('Failed to fetch categories:', error);
       setCategoryList([]);
@@ -64,9 +69,21 @@ export default function CategoryTab({
     }
   };
 
+  // Fetch strictly ONCE when tab becomes active
   useEffect(() => {
-    fetchCategories();
-  }, []);
+    if (isActive && !hasFetchedRef.current) {
+      fetchCategories();
+    }
+  }, [isActive]);
+
+  // Performance Optimization: O(1) Quick lookup map for parents
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (categoryList || []).forEach(cat => {
+      map.set(String(cat.id), getName(cat));
+    });
+    return map;
+  }, [categoryList]);
 
   const resetForm = () => {
     setForm({ name: '', parentId: null });
@@ -83,7 +100,7 @@ export default function CategoryTab({
       const categoryData: CreateCategoryInput = {
         category_name: form.name.trim(),
         url_slug: generateSlug(form.name),
-       parent_category_id: form.parentId ? Number(form.parentId) : null,
+        parent_category_id: form.parentId ? Number(form.parentId) : null,
         status: 'active',
       };
 
@@ -93,10 +110,8 @@ export default function CategoryTab({
         await createCategory(categoryData);
       }
 
-      await fetchCategories(); // Refresh list
-
+      await fetchCategories();
       if (onSave) onSave(form, editingId);
-
       resetForm();
     } catch (error) {
       console.error('Failed to save category:', error);
@@ -109,8 +124,7 @@ export default function CategoryTab({
     setLoading(true);
     try {
       await deleteCategory(id);
-      await fetchCategories(); // Refresh list
-
+      await fetchCategories();
       if (onDelete) onDelete(id);
     } catch (error) {
       console.error('Failed to delete category:', error);
@@ -118,6 +132,8 @@ export default function CategoryTab({
       setLoading(false);
     }
   };
+
+  if (!isActive) return null;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -153,7 +169,7 @@ export default function CategoryTab({
               .filter(c => String(c.id) !== editingId)
               .map(cat => (
                 <option key={cat.id} value={cat.id}>
-                  {cat.category_name}
+                  {getName(cat)}
                 </option>
               ))}
           </select>
@@ -191,22 +207,23 @@ export default function CategoryTab({
           </thead>
           <tbody className="divide-y divide-slate-800/30">
             {(categoryList || []).map(c => {
-              const parent = (categoryList || []).find(
-                p => String(p.id) === String(c.parent_category_id)
-              );
+              const categoryName = getName(c);
+              const parentCatId = getParentId(c);
+              const parentName = parentCatId ? categoryMap.get(String(parentCatId)) : null;
+
               return (
                 <tr key={c.id} className={`hover:bg-indigo-500/5 ${borderRow}`}>
-                  <td className="p-3 font-bold">{c.category_name}</td>
+                  <td className="p-3 font-bold">{categoryName}</td>
                   <td className="p-3 text-xs text-slate-400">
-                    {parent ? `↳ ${parent.category_name}` : '—'}
+                    {parentName ? `↳ ${parentName}` : '—'}
                   </td>
                   <td className="p-3 text-right space-x-2">
                     <button 
                       onClick={() => { 
                         setEditingId(String(c.id)); 
                         setForm({ 
-                          name: c.category_name, 
-                          parentId: c.parent_category_id ? String(c.parent_category_id) : null 
+                          name: categoryName, 
+                          parentId: parentCatId ? String(parentCatId) : null 
                         }); 
                       }} 
                       className="text-xs text-indigo-400 hover:underline"

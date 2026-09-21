@@ -2,13 +2,19 @@ import AxiosInstance from '../api/axiosInstance';
 
 export type CategoryType = {
   id: number | string;
-  category_name: string;
-  url_slug: string;
+  category_name?: string;
+  categoryName?: string;
+  url_slug?: string;
+  urlSlug?: string;
   parent_category_id?: number | null;
+  parentCategoryId?: number | null;
   status?: number | string;
   created_at?: string;
+  createdAt?: string;
   updated_at?: string;
+  updatedAt?: string;
   deleted_at?: string | null;
+  deletedAt?: string | null;
 };
 
 export type CreateCategoryInput = {
@@ -42,7 +48,7 @@ export const updateCategory = async (
   id: number | string,
   data: Partial<CreateCategoryInput>
 ): Promise<CategoryType> => {
-  const response = await AxiosInstance.put(`/categories/${id}`, data);
+  const response = await AxiosInstance.patch(`/categories/${id}`, data);
   return response.data;
 };
 
@@ -144,11 +150,12 @@ export type CreateBrandInput = {
 
 export type Brand = {
   id: string | number;
-  brand_name: string;
-  logo: string | null;
-  created_at: Date | string;
+  brand_name?: string;
+  brandName?: string;
+  logo?: string | null;
+  created_at?: Date | string;
+  createdAt?: Date | string;
 };
-
 
 // Get all Brands API call
 export const getAllBrands = async (page: number = 1, perPage: number = 10) => {
@@ -172,7 +179,7 @@ export const updateBrand = async (
   id: string | number,
   data: Partial<CreateBrandInput>
 ): Promise<Brand> => {
-  const response = await AxiosInstance.put(`/brands/${id}`, data);
+  const response = await AxiosInstance.patch(`/brands/${id}`, data);
   return response.data;
 };
 

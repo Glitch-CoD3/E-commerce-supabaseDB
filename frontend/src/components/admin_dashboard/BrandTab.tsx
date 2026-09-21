@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   CreateBrandInput,
   Brand,
@@ -11,6 +11,7 @@ import {
 } from '../../services/product.service';
 
 type BrandTabProps = {
+  isActive?: boolean;
   brands?: Brand[];
   onSave?: (data: CreateBrandInput, editingId: string | null) => void;
   onDelete?: (id: string | number) => void;
@@ -20,7 +21,11 @@ type BrandTabProps = {
   borderRow?: string;
 };
 
+// Helper function outside component to avoid reference updates
+const getBrandName = (brand: Brand) => brand.brandName || brand.brand_name || '';
+
 export default function BrandTab({
+  isActive = true,
   brands: initialBrands = [],
   onSave,
   onDelete,
@@ -35,43 +40,55 @@ export default function BrandTab({
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Load brands on component mount
-  const fetchBrands = async () => {
+  const hasFetchedRef = useRef(false);
+
+  // Fetch brands API call
+  const fetchBrands = useCallback(async () => {
     try {
       setLoading(true);
       const fetchedBrands = await getAllBrands();
-      setBrands(fetchedBrands.data);
-      // console.log('Fetched brands:', fetchedBrands.data);
+      setBrands(fetchedBrands.data || []);
+      hasFetchedRef.current = true;
     } catch (err) {
       console.error('Failed to fetch brands:', err);
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchBrands();
   }, []);
 
-  // Handle Edit Click
-  const handleEditClick = (brand: Brand) => {
-    setEditingId(brand.id);
-    setBrandName(brand.brand_name);
-    setLogo(brand.logo || '');
-  };
+  // Fetch strictly ONCE when tab becomes active
+  useEffect(() => {
+    if (isActive && !hasFetchedRef.current) {
+      fetchBrands();
+    }
+  }, [isActive, fetchBrands]);
 
-  // Reset form
-  const resetForm = () => {
+  // Performance Optimization: Memoize transformed list to prevent O(N) calculations on input keypresses
+  const memoizedBrands = useMemo(() => {
+    return brands.map(brand => ({
+      ...brand,
+      displayName: getBrandName(brand),
+    }));
+  }, [brands]);
+
+  // Stable handlers using useCallback
+  const resetForm = useCallback(() => {
     setBrandName('');
     setLogo('');
     setEditingId(null);
-  };
+  }, []);
 
-  // Handle Form Submit
+  const handleEditClick = useCallback((brand: Brand) => {
+    setEditingId(brand.id);
+    setBrandName(getBrandName(brand));
+    setLogo(brand.logo || '');
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!brandName.trim()) return;
 
+    setLoading(true);
     const payload: CreateBrandInput = {
       brand_name: brandName.trim(),
       logo: logo.trim() || null,
@@ -84,10 +101,8 @@ export default function BrandTab({
         await createBrand(payload);
       }
 
-      // Refresh list after saving
       await fetchBrands();
 
-      // Trigger optional parent callback
       if (onSave) {
         onSave(payload, editingId ? String(editingId) : null);
       }
@@ -95,29 +110,32 @@ export default function BrandTab({
       resetForm();
     } catch (err) {
       console.error('Failed to save brand:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Handle Delete
-  const handleDelete = async (id: string | number) => {
+  const handleDelete = useCallback(async (id: string | number) => {
+    setLoading(true);
     try {
       await deleteBrand(id);
-
-      // Refresh list after deletion
       await fetchBrands();
 
-      // Trigger optional parent callback
       if (onDelete) {
         onDelete(String(id));
       }
     } catch (err) {
       console.error('Failed to delete brand:', err);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [fetchBrands, onDelete]);
+
+  if (!isActive) return null;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {/* Brand Creation & Edit Form */}
+      {/* Brand Form */}
       <form onSubmit={handleSubmit} className={`${formSubBg} p-5 rounded-xl border space-y-4 h-fit`}>
         <h3 className="text-sm font-bold flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
@@ -129,6 +147,7 @@ export default function BrandTab({
           <input
             type="text"
             required
+            disabled={loading}
             value={brandName}
             onChange={e => setBrandName(e.target.value)}
             className={`w-full text-xs p-2.5 rounded-lg border outline-none ${inputBg}`}
@@ -139,18 +158,16 @@ export default function BrandTab({
         <div className="flex gap-2">
           <button
             type="submit"
-            className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs py-2.5 rounded-lg font-bold shadow-lg shadow-indigo-600/20 transition"
+            disabled={loading}
+            className="flex-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs py-2.5 rounded-lg font-bold shadow-lg shadow-indigo-600/20 transition"
           >
-            {editingId ? 'Update Brand' : 'Save Brand'}
+            {loading ? 'Saving...' : editingId ? 'Update Brand' : 'Save Brand'}
           </button>
 
           {editingId && (
             <button
               type="button"
-              onClick={() => {
-                setEditingId(null);
-                setBrandName('');
-              }}
+              onClick={resetForm}
               className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2.5 rounded-lg font-bold transition"
             >
               Cancel
@@ -169,23 +186,19 @@ export default function BrandTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/30">
-            {brands.length === 0 ? (
+            {memoizedBrands.length === 0 ? (
               <tr>
                 <td colSpan={2} className="p-4 text-center text-xs text-slate-400">
                   No brands found.
                 </td>
               </tr>
             ) : (
-              brands.map(brand => (
+              memoizedBrands.map(brand => (
                 <tr key={brand.id} className={`hover:bg-indigo-500/5 ${borderRow}`}>
-                  <td className="p-3 font-bold">{brand.brand_name}</td>
+                  <td className="p-3 font-bold">{brand.displayName}</td>
                   <td className="p-3 text-right space-x-2">
                     <button
-                      onClick={() => {
-                        setEditingId(brand.id);
-                        setBrandName(brand.brand_name);
-                        setLogo(brand.logo || '');
-                      }}
+                      onClick={() => handleEditClick(brand)}
                       className="text-xs text-indigo-400 hover:underline"
                     >
                       Edit

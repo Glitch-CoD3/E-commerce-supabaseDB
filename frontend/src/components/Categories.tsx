@@ -45,10 +45,10 @@ const Categories = () => {
         // Map backend objects safely so category_name and slug always exist
         const fetchedCats = (response?.All_categories || []).map((cat: any) => ({
           ...cat,
-          category_name: cat.category_name || cat.name || "Unnamed",
-          slug: cat.slug || cat.url_slug || cat.category_name?.toLowerCase() || "all",
+          category_name: cat.categoryName || "Unnamed",
+          slug: cat.urlSlug || "Unnamed",
           // Keep subcategories/children array intact
-          children: cat.children || cat.subcategories || [],
+          children: cat.children || [],
         }));
 
         setCategories([
@@ -97,9 +97,8 @@ const Categories = () => {
             {/* Parent Category Pill */}
             <div
               onClick={() => handleChange(catSlug)}
-              className={`flex items-center justify-center gap-2 cursor-pointer px-3 py-1.5 rounded-md transition ${
-                isSelected ? "bg-white shadow font-semibold text-gray-900" : "text-gray-500 hover:bg-white"
-              }`}
+              className={`flex items-center justify-center gap-2 cursor-pointer px-3 py-1.5 rounded-md transition ${isSelected ? "bg-white shadow font-semibold text-gray-900" : "text-gray-500 hover:bg-white"
+                }`}
             >
               {iconMap?.[catName]}
               <span>{catName}</span>
@@ -126,11 +125,10 @@ const Categories = () => {
                           e.stopPropagation();
                           handleChange(childSlug);
                         }}
-                        className={`px-3 py-1.5 rounded-md text-xs cursor-pointer transition flex items-center gap-2 ${
-                          isChildSelected
+                        className={`px-3 py-1.5 rounded-md text-xs cursor-pointer transition flex items-center gap-2 ${isChildSelected
                             ? "bg-indigo-50 text-indigo-600 font-semibold"
                             : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                        }`}
+                          }`}
                       >
                         {iconMap?.[childName]}
                         <span>{childName}</span>

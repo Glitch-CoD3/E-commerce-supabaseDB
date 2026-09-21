@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAllOrdersAdmin } from '../../services/order.service';
 import { formatRelativeTime } from '../../services/timeformate.js';
@@ -29,6 +29,9 @@ type PaginationMeta = {
   totalOrders: number;
 };
 
+// In-memory user cache across component renders to prevent duplicate network calls
+const userCache = new Map<string, { full_name?: string; email?: string }>();
+
 export default function OrderTab({
   getStatusBadge,
   tableHeaderBg,
@@ -42,8 +45,11 @@ export default function OrderTab({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Ref guard to prevent double-fetching on initial mount (e.g. React Strict Mode)
+  const isInitialFetchedRef = useRef(false);
+
   // Helper function to fetch orders and merge user details
-  const fetchOrdersAndUsers = async (pageNum: number, isLoadMore = false) => {
+  const fetchOrdersAndUsers = useCallback(async (pageNum: number, isLoadMore = false) => {
     try {
       if (isLoadMore) {
         setLoadingMore(true);
@@ -63,30 +69,34 @@ export default function OrderTab({
         totalOrders: data.totalOrders || rawOrders.length,
       });
 
-      // 2. Extract UNIQUE user IDs to prevent redundant requests
-      const uniqueUserIds = Array.from(
-        new Set(rawOrders.map((order) => order.user_id).filter(Boolean))
+      // 2. Extract UNIQUE user IDs not yet present in the local cache
+      const uncachedUserIds = Array.from(
+        new Set(
+          rawOrders
+            .map((order) => order.user_id)
+            .filter((id): id is string => Boolean(id) && !userCache.has(id))
+        )
       );
 
-      // 3. Fetch user info only once per unique user ID
-      const userMap = new Map<string, { full_name?: string; email?: string }>();
-
-      await Promise.all(
-        uniqueUserIds.map(async (userId) => {
-          try {
-            const userRes = await getUserById(userId);
-            if (userRes?.user) {
-              userMap.set(userId, userRes.user);
+      // 3. Fetch missing user info only once per unique user ID in parallel
+      if (uncachedUserIds.length > 0) {
+        await Promise.all(
+          uncachedUserIds.map(async (userId) => {
+            try {
+              const userRes = await getUserById(userId);
+              if (userRes?.user) {
+                userCache.set(userId, userRes.user);
+              }
+            } catch (err) {
+              console.error(`Failed to fetch user ID ${userId}:`, err);
             }
-          } catch (err) {
-            console.error(`Failed to fetch user ID ${userId}:`, err);
-          }
-        })
-      );
+          })
+        );
+      }
 
-      // 4. Map user details back to each order using cached Map lookup
+      // 4. Map user details back to each order using cached lookup
       const formattedOrders: Order[] = rawOrders.map((order) => {
-        const user = userMap.get(order.user_id);
+        const user = userCache.get(order.user_id);
 
         return {
           ...order,
@@ -96,7 +106,7 @@ export default function OrderTab({
         };
       });
 
-      // 5. Append or Replace depending on initial load vs see more
+      // 5. Append or Replace depending on initial load vs load more
       if (isLoadMore) {
         setOrders((prev) => [...prev, ...formattedOrders]);
       } else {
@@ -110,22 +120,41 @@ export default function OrderTab({
       setLoading(false);
       setLoadingMore(false);
     }
-  };
-
-  useEffect(() => {
-    fetchOrdersAndUsers(1);
   }, []);
 
-  const handleLoadMore = () => {
+  // Fetch initial page strictly once on mount
+  useEffect(() => {
+    if (!isInitialFetchedRef.current) {
+      isInitialFetchedRef.current = true;
+      fetchOrdersAndUsers(1);
+    }
+  }, [fetchOrdersAndUsers]);
+
+  const handleLoadMore = useCallback(() => {
     const nextPage = page + 1;
     setPage(nextPage);
     fetchOrdersAndUsers(nextPage, true);
-  };
+  }, [page, fetchOrdersAndUsers]);
 
   // Handler to navigate to the order details page
-  const handleViewDetails = (orderId: string | number) => {
+  const handleViewDetails = useCallback((orderId: string | number) => {
     router.push(`/dashboard/orders/${orderId}`);
-  };
+  }, [router]);
+
+  // Performance Optimization: Cache stats calculation to avoid O(N) array filtering on every render
+  const { paidCount, shippedCount } = useMemo(() => {
+    let paid = 0;
+    let shipped = 0;
+    for (let i = 0; i < orders.length; i++) {
+      if (orders[i].status === 'paid') paid++;
+      if (orders[i].status === 'shipped') shipped++;
+    }
+    return { paidCount: paid, shippedCount: shipped };
+  }, [orders]);
+
+  const hasMorePages = useMemo(() => {
+    return pagination ? page < pagination.totalPages : false;
+  }, [pagination, page]);
 
   if (loading) {
     return (
@@ -142,9 +171,6 @@ export default function OrderTab({
       </div>
     );
   }
-
-  const shippedCount = orders.filter((order) => order.status === 'shipped').length;
-  const hasMorePages = pagination ? page < pagination.totalPages : false;
 
   return (
     <div className="space-y-6">
@@ -172,7 +198,7 @@ export default function OrderTab({
             <div>
               <p className="text-sm font-medium text-slate-400">Paid Orders</p>
               <h2 className="mt-2 text-3xl font-extrabold text-emerald-400">
-                {orders.filter((order) => order.status === 'paid').length}
+                {paidCount}
               </h2>
             </div>
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-500/15 text-2xl">
