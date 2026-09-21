@@ -404,11 +404,42 @@ const clearCart = async (req, res) => {
     }
 };
 
+
+const getCartCount = async (req, res) => {
+    try {
+        const user_id = getUserId(req);
+
+        if (!user_id) {
+            return sendError(res, 401, "Authentication required.");
+        }
+
+        const count = await prisma.cart.count({
+            where: {
+                userId: user_id
+            }
+        });
+
+        return res.status(200).json({
+            success: true,
+            count
+        });
+
+    } catch (error) {
+        return handleError(
+            res,
+            error,
+            "Get Cart Count Error",
+            "Failed to retrieve cart count."
+        );
+    }
+};
+
 export {
     addToCart,
     getCart,
     getCartItemById,
     updateCartQuantity,
     removeCartItem,
-    clearCart
+    clearCart,
+    getCartCount
 };

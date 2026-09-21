@@ -5,7 +5,8 @@ import {
     getCartItemById,
     updateCartQuantity,
     removeCartItem,
-    clearCart
+    clearCart,
+    getCartCount
 } from "../controllers/cart.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -43,6 +44,13 @@ router.post("/", addToCart);
  * @access Private (User, Admin)
  */
 router.get("/", getCart);
+
+/**
+ * @method GET /api/v1/cart
+ * @description Retrieve all items in the authenticated user's cart.
+ * @access Private (User, Admin)
+ */
+router.get("/count", getCartCount);
 
 /**
  * @method GET /api/v1/cart/:id
