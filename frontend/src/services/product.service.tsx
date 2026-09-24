@@ -27,6 +27,7 @@ export type CreateCategoryInput = {
 // Create category API call
 export const createCategory = async (data: Partial<CategoryType>) => {
   const response = await AxiosInstance.post("/categories", data);
+  console.log("Created category", response.data)
   return response.data;
 };
 
