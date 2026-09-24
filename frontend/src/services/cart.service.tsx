@@ -14,6 +14,8 @@ export type CartType = {
   updated_at?: string;
 };
 
+
+
 export type AddToCartInput = {
   product_id?: number | string;
   product_variant_id?: number | string;
@@ -76,8 +78,12 @@ export const clearCart = async (): Promise<void> => {
 
 
 //7 Cart count
-export const getCartCount = async (): Promise<CartType[]> => {
+export type CartCountResponse = {
+  success: boolean;
+  count: number;
+};
+
+export const getCartCount = async (): Promise<CartCountResponse> => {
   const response = await AxiosInstance.get("/cart/count");
-  // console.log("Get All Carts Response:", response.data);
   return response.data;
 };

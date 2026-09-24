@@ -186,7 +186,7 @@ const ProductCard = ({ product }: { product: ProductType }) => {
                 >
                   {availableSizes.map((size) => (
                     <option key={size} value={size}>
-                      {size.toUpperCase()}
+                      {size || size.toUpperCase()}
                     </option>
                   ))}
                 </select>

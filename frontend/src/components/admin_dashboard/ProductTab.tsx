@@ -96,7 +96,7 @@ export default function ProductTab({
     setIsFetchingData(true);
     try {
       const [productsRes, categoriesRes, brandsRes] = await Promise.all([
-        getAllProducts(1),
+        getAllProducts(1, 10),
         getCategories(),
         getAllBrands(),
       ]);

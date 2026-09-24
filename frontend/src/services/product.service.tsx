@@ -103,7 +103,7 @@ export const createProduct = async (data: any) => {
 
 // Get all Products API call
 export const getAllProducts = async (page: number = 1, perPage: number = 10) => {
-   console.trace("🔥 getAllProducts called");
+
   const response = await AxiosInstance.get("/products/", {
     params: {
       page,
