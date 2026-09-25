@@ -434,6 +434,7 @@ const getOrdersByUserId = async (req, res) => {
  * @description Get one of the authenticated user's orders by order id
  * @access Private (Authenticated User)
  */
+
 const getOrderByOrderId = async (req, res) => {
     try {
         const user_id = getUserId(req);
@@ -449,18 +450,37 @@ const getOrderByOrderId = async (req, res) => {
             return sendError(res, 400, "Order ID is required");
         }
 
-        const order = await prisma.order.findFirst({
-            where: { id: orderId, userId: user_id }
-        });
+        const orderResult = await prisma.$queryRaw`
+            SELECT *
+            FROM "orders"
+            WHERE "id" = ${orderId}
+              AND "user_id" = ${user_id}
+            LIMIT 1
+        `;
+
+        const order = orderResult[0];
 
         if (!order) {
             return sendError(res, 404, "Order not found");
         }
 
-        const [items, shippingAddress] = await Promise.all([
-            prisma.orderItem.findMany({ where: { orderId }, orderBy: { id: "asc" } }),
-            prisma.orderShippingAddress.findFirst({ where: { orderId } })
+        const [items, shippingAddressResult] = await Promise.all([
+            prisma.$queryRaw`
+                SELECT *
+                FROM "order_items"
+                WHERE "order_id" = ${orderId}
+                ORDER BY "id" ASC
+            `,
+
+            prisma.$queryRaw`
+                SELECT *
+                FROM "order_shipping_addresses"
+                WHERE "order_id" = ${orderId}
+                LIMIT 1
+            `
         ]);
+
+        const shippingAddress = shippingAddressResult[0] || null;
 
         return res.status(200).json({
             success: true,
@@ -468,11 +488,18 @@ const getOrderByOrderId = async (req, res) => {
             order_result: serialize({
                 order_details: formatOrder(order),
                 Order_items: items.map(formatOrderItem),
-                shipping_address: formatShippingAddress(shippingAddress) || null
+                shipping_address:
+                    formatShippingAddress(shippingAddress) || null
             })
         });
+
     } catch (error) {
-        return handleError(res, error, "Get Order By ID Error", "Failed to fetch order.");
+        return handleError(
+            res,
+            error,
+            "Get Order By ID Error",
+            "Failed to fetch order."
+        );
     }
 };
 

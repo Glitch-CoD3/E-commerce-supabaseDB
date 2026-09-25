@@ -53,3 +53,10 @@ export const getCartCount = async () => {
 
   return response.data;
 };
+
+// 8. Get All Carts
+export const FetchCartDetails = async () => {
+  const response = await AxiosInstance.get("/cart/details");
+  // console.log("Get All Carts Response:", response.data);
+  return response.data;
+};

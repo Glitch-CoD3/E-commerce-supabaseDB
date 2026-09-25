@@ -6,7 +6,8 @@ import {
     updateCartQuantity,
     removeCartItem,
     clearCart,
-    getCartCount
+    getCartCount,
+    fetchCart
 } from "../controllers/cart.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -46,7 +47,14 @@ router.post("/", addToCart);
 router.get("/", getCart);
 
 /**
- * @method GET /api/v1/cart
+ * @method GET /api/v1/cart/fetch
+ * @description Retrieve all items in the authenticated user's cart.
+ * @access Private (User, Admin)
+ */
+router.get("/details", fetchCart);
+
+/**
+ * @method GET /api/v1/cart/count
  * @description Retrieve all items in the authenticated user's cart.
  * @access Private (User, Admin)
  */

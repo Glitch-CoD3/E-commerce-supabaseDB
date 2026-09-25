@@ -197,18 +197,6 @@ const getCart = async (req, res) => {
             return sendError(res, 401, "Authentication required.");
         }
 
-        const cacheKey = `cart:list:${user_id}`;
-
-        try {
-            const cachedCart = await redis.get(cacheKey);
-            if (cachedCart) {
-                console.log(`[Redis] Cache HIT — cart served from Redis (key: ${cacheKey})`);
-                return res.status(200).json(cachedCart);
-            }
-            console.log(`[Redis] Cache MISS — fetching cart from database (key: ${cacheKey})`);
-        } catch (redisErr) {
-            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
-        }
 
         const cart = await prisma.cart.findMany({
             where: { userId: user_id },
@@ -225,15 +213,9 @@ const getCart = async (req, res) => {
                 clear_cart: "/api/v1/cart"
             }
         };
+        
 
-        try {
-            await redis.set(cacheKey, serialize(responsePayload), { ex: CART_CACHE_TTL });
-            console.log(`[Redis] Cart cached for ${CART_CACHE_TTL}s (key: ${cacheKey})`);
-        } catch (redisErr) {
-            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
-        }
-
-        return res.status(200).json(responsePayload);
+    return res.status(200).json(responsePayload);
     } catch (error) {
         return handleError(res, error, "Get Cart Error", "Failed to retrieve cart.");
     }
@@ -258,25 +240,114 @@ const getCartItemById = async (req, res) => {
             return sendError(res, 400, "Valid cart item ID is required.");
         }
 
-        const cart = await prisma.cart.findFirst({
-            where: { id: cartId, userId: user_id },
-            select: { ...cartSelect, userId: true }
-        });
+        const result = await prisma.$queryRaw`
+            SELECT
+                c.id,
+                c.user_id,
+                c.quantity,
+                c.created_at,
+                c.updated_at,
 
-        if (!cart) {
+                jsonb_build_object(
+                    'id', p.id,
+                    'productName', p.product_name,
+                    'urlSlug', p.url_slug,
+                    'description', p.description,
+                    'shortDescription', p.short_description,
+                    'price', p.price,
+                    'stockQuantity', p.stock_quantity,
+                    'status', p.status,
+
+                    'category',
+                    CASE
+                        WHEN cat.id IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'id', cat.id,
+                            'categoryName', cat.category_name,
+                            'urlSlug', cat.url_slug
+                        )
+                    END,
+
+                    'brand',
+                    CASE
+                        WHEN b.id IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'id', b.id,
+                            'brandName', b.brand_name
+                        )
+                    END
+                ) AS product,
+
+                CASE
+                    WHEN pv.id IS NULL THEN NULL
+                    ELSE jsonb_build_object(
+                        'id', pv.id,
+                        'productId', pv.product_id,
+                        'colors', pv.colors,
+                        'sizes', pv.sizes,
+                        'price', pv.price,
+                        'stockQuantity', pv.stock_quantity,
+
+                        'images',
+                        COALESCE(
+                            (
+                                SELECT jsonb_agg(
+                                    jsonb_build_object(
+                                        'id', vi.id,
+                                        'imageUrl', vi.image_url,
+                                        'sortOrder', vi.sort_order
+                                    )
+                                    ORDER BY vi.sort_order ASC
+                                )
+                                FROM variant_images vi
+                                WHERE vi.product_variant_id = pv.id
+                                  AND vi.deleted_at IS NULL
+                            ),
+                            '[]'::jsonb
+                        )
+                    )
+                END AS variant
+
+            FROM carts c
+
+            LEFT JOIN products p
+                ON p.id = c.product_id
+
+            LEFT JOIN categories cat
+                ON cat.id = p.category_id
+
+            LEFT JOIN brands b
+                ON b.id = p.brand_id
+
+            LEFT JOIN product_variants pv
+                ON pv.id = c.product_variant_id
+
+            WHERE c.id = ${cartId}
+              AND c.user_id = ${user_id}
+
+            LIMIT 1
+        `;
+
+        if (result.length === 0) {
             return sendError(res, 404, "Cart item not found.");
         }
 
         return res.status(200).json({
             success: true,
-            data: serialize(formatCartItem(cart)),
+            data: serialize(result[0]),
             links: {
                 self: `/api/v1/cart/${id}`,
                 cart: "/api/v1/cart"
             }
         });
+
     } catch (error) {
-        return handleError(res, error, "Get Cart Item Error", "Failed to retrieve cart item.");
+        return handleError(
+            res,
+            error,
+            "Get Cart Item Error",
+            "Failed to retrieve cart item."
+        );
     }
 };
 
@@ -434,6 +505,123 @@ const getCartCount = async (req, res) => {
     }
 };
 
+
+const fetchCart = async (req, res) => {
+    try {
+        const user_id = getUserId(req);
+
+        if (!user_id) {
+            return sendError(res, 401, "Authentication required.");
+        }
+
+        const cart = await prisma.$queryRaw`
+            SELECT
+                c.id,
+                c.user_id,
+                c.quantity,
+                c.created_at,
+                c.updated_at,
+
+                jsonb_build_object(
+                    'id', p.id,
+                    'productName', p.product_name,
+                    'urlSlug', p.url_slug,
+                    'description', p.description,
+                    'shortDescription', p.short_description,
+                    'price', p.price,
+                    'stockQuantity', p.stock_quantity,
+                    'status', p.status,
+
+                    'category',
+                    CASE
+                        WHEN cat.id IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'id', cat.id,
+                            'categoryName', cat.category_name,
+                            'urlSlug', cat.url_slug
+                        )
+                    END,
+
+                    'brand',
+                    CASE
+                        WHEN b.id IS NULL THEN NULL
+                        ELSE jsonb_build_object(
+                            'id', b.id,
+                            'brandName', b.brand_name
+                        )
+                    END
+                ) AS product,
+
+                CASE
+                    WHEN pv.id IS NULL THEN NULL
+                    ELSE jsonb_build_object(
+                        'id', pv.id,
+                        'productId', pv.product_id,
+                        'colors', pv.colors,
+                        'sizes', pv.sizes,
+                        'price', pv.price,
+                        'stockQuantity', pv.stock_quantity,
+
+                        'images',
+                        COALESCE(
+                            (
+                                SELECT jsonb_agg(
+                                    jsonb_build_object(
+                                        'id', vi.id,
+                                        'imageUrl', vi.image_url,
+                                        'sortOrder', vi.sort_order
+                                    )
+                                    ORDER BY vi.sort_order ASC
+                                )
+                                FROM variant_images vi
+                                WHERE vi.product_variant_id = pv.id
+                                  AND vi.deleted_at IS NULL
+                            ),
+                            '[]'::jsonb
+                        )
+                    )
+                END AS variant
+
+            FROM carts c
+
+            LEFT JOIN products p
+                ON p.id = c.product_id
+
+            LEFT JOIN categories cat
+                ON cat.id = p.category_id
+
+            LEFT JOIN brands b
+                ON b.id = p.brand_id
+
+            LEFT JOIN product_variants pv
+                ON pv.id = c.product_variant_id
+
+            WHERE c.user_id = ${user_id}
+
+            ORDER BY c.created_at DESC
+        `;
+
+        return res.status(200).json({
+            success: true,
+            count: cart.length,
+            data: serialize(cart),
+            links: {
+                add_to_cart: "/api/v1/cart",
+                clear_cart: "/api/v1/cart"
+            }
+        });
+
+    } catch (error) {
+        return handleError(
+            res,
+            error,
+            "Get Cart Error",
+            "Failed to retrieve cart."
+        );
+    }
+};
+
+
 export {
     addToCart,
     getCart,
@@ -441,5 +629,6 @@ export {
     updateCartQuantity,
     removeCartItem,
     clearCart,
-    getCartCount
+    getCartCount,
+    fetchCart //share 
 };
