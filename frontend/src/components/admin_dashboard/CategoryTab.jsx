@@ -1,0 +1,232 @@
+'use client';
+
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  CategoryType, 
+  getCategories, 
+  createCategory, 
+  updateCategory, 
+  deleteCategory 
+} from "../../services/product.service";
+
+
+const generateSlug = (text) => {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
+
+const getName = (cat) => cat.categoryName || cat.category_name || '';
+const getParentId = (cat) => cat.parentCategoryId ?? cat.parent_category_id ?? null;
+
+export default function CategoryTab({
+  isActive = true,
+  categories: initialCategories = [],
+  onSave,
+  onDelete,
+  formSubBg,
+  tableHeaderBg,
+  inputBg,
+  borderRow,
+}) {
+  const [form, setForm] = useState({ name: '', parentId: null });
+  const [categoryList, setCategoryList] = useState(initialCategories);
+  const [editingId, setEditingId] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const hasFetchedRef = useRef(false);
+
+  const fetchCategories = async () => {
+    setLoading(true);
+    try {
+      const response = await getCategories();
+      setCategoryList(response.All_categories || []);
+      hasFetchedRef.current = true;
+    } catch (error) {
+      console.error('Failed to fetch categories:', error);
+      setCategoryList([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch strictly ONCE when tab becomes active
+  useEffect(() => {
+    if (isActive && !hasFetchedRef.current) {
+      fetchCategories();
+    }
+  }, [isActive]);
+
+  // Performance Optimization: O(1) Quick lookup map for parents
+  const categoryMap = useMemo(() => {
+    const map = new Map();
+    (categoryList || []).forEach(cat => {
+      map.set(String(cat.id), getName(cat));
+    });
+    return map;
+  }, [categoryList]);
+
+  const resetForm = () => {
+    setForm({ name: '', parentId: null });
+    setEditingId(null);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) return;
+
+    setLoading(true);
+
+    try {
+      const categoryData = {
+        category_name: form.name.trim(),
+        url_slug: generateSlug(form.name),
+        parent_category_id: form.parentId ? Number(form.parentId) : null,
+        status: 'active',
+      };
+
+      if (editingId) {
+        await updateCategory(editingId, categoryData);
+      } else {
+        await createCategory(categoryData);
+      }
+
+      await fetchCategories();
+      if (onSave) onSave(form, editingId);
+      resetForm();
+    } catch (error) {
+      console.error('Failed to save category:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setLoading(true);
+    try {
+      await deleteCategory(id);
+      await fetchCategories();
+      if (onDelete) onDelete(id);
+    } catch (error) {
+      console.error('Failed to delete category:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isActive) return null;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* Form Section */}
+      <form onSubmit={handleSubmit} className={`${formSubBg} p-5 rounded-xl border space-y-4 h-fit`}>
+        <h3 className="text-sm font-bold flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+          {editingId ? 'Edit Category' : 'Add Category'}
+        </h3>
+        
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 mb-1">Category Name</label>
+          <input
+            type="text"
+            required
+            disabled={loading}
+            value={form.name}
+            onChange={e => setForm({ ...form, name: e.target.value })}
+            className={`w-full text-xs p-2.5 rounded-lg border outline-none ${inputBg}`}
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 mb-1">Parent Category</label>
+          <select
+            value={form.parentId || ''}
+            disabled={loading}
+            onChange={e => setForm({ ...form, parentId: e.target.value ? e.target.value : null })}
+            className={`w-full text-xs p-2.5 rounded-lg border outline-none ${inputBg}`}
+          >
+            <option value="">None (Top-Level)</option>
+            {(categoryList || [])
+              .filter(c => String(c.id) !== editingId)
+              .map(cat => (
+                <option key={cat.id} value={cat.id}>
+                  {getName(cat)}
+                </option>
+              ))}
+          </select>
+        </div>
+
+        <div className="flex gap-2">
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs py-2.5 rounded-lg font-bold shadow-lg shadow-indigo-600/20 transition-all"
+          >
+            {loading ? 'Saving...' : editingId ? 'Update Category' : 'Save Category'}
+          </button>
+          {editingId && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-3 bg-slate-700 hover:bg-slate-600 text-white text-xs rounded-lg transition-all"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+      </form>
+
+      {/* Table Section */}
+      <div className="lg:col-span-2 overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className={`text-xs uppercase font-bold border-b ${tableHeaderBg}`}>
+            <tr>
+              <th className="p-3">Category Name</th>
+              <th className="p-3">Parent Category</th>
+              <th className="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/30">
+            {(categoryList || []).map(c => {
+              const categoryName = getName(c);
+              const parentCatId = getParentId(c);
+              const parentName = parentCatId ? categoryMap.get(String(parentCatId)) : null;
+
+              return (
+                <tr key={c.id} className={`hover:bg-indigo-500/5 ${borderRow}`}>
+                  <td className="p-3 font-bold">{categoryName}</td>
+                  <td className="p-3 text-xs text-slate-400">
+                    {parentName ? `↳ ${parentName}` : '—'}
+                  </td>
+                  <td className="p-3 text-right space-x-2">
+                    <button 
+                      onClick={() => { 
+                        setEditingId(String(c.id)); 
+                        setForm({ 
+                          name: categoryName, 
+                          parentId: parentCatId ? String(parentCatId) : null 
+                        }); 
+                      }} 
+                      className="text-xs text-indigo-400 hover:underline"
+                    >
+                      Edit
+                    </button>
+                    <button 
+                      onClick={() => handleDelete(String(c.id))} 
+                      className="text-xs text-rose-500 hover:underline"
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

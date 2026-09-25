@@ -3,4 +3,4 @@ node_modules/
 dist/
 .dockerignore
 git-note.txt
-frontend2
+frontend_typeScript

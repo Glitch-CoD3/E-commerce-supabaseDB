@@ -1,6 +1,6 @@
 "use client";
 
-import { updateOrderStatus, updatePaymentStatus } from "@/src/services/order.service";
+import { updateOrderStatus, updatePaymentStatus } from "../../services/order.service.js";
 import { useState, useEffect } from "react";
 import {
   Package,
@@ -19,7 +19,7 @@ import {
   RotateCcw,
   Printer
 } from "lucide-react";
-import { formatRelativeTime } from '../../services/timeformate';
+import { formatRelativeTime } from '../../services/timeformate.js';
 
 const STATUS_CONFIG = {
   pending: { label: "Pending", badgeClass: "bg-amber-50 text-amber-700 ring-amber-600/20 print:bg-amber-100 print:text-amber-800", Icon: Clock },
@@ -180,7 +180,7 @@ export default function OrderDetails(props) {
                 <h1 className="text-xl font-bold tracking-tight text-white sm:text-2xl print:text-slate-900 print:text-3xl">
                   INVOICE
                 </h1>
-                
+
                 {/* Print Button (Hidden in Print View) */}
                 <button
                   type="button"
