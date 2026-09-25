@@ -1,6 +1,6 @@
 import { Prisma, OrderStatus } from "@prisma/client";
 import prisma from "../config/prisma.js";
-import { getAllCart } from "../utils/axiosClient.js";
+import { getAllCart, ClearCart } from "../utils/axiosClient.js";
 import { getProductsByIds, getProductByVariantId, getProductVarientImage } from "../utils/product.api.js";
 import { getShippingAddress } from "../utils/getShippingAddress.api.js";
 import { INSIDE_DHAKA_FEE, OUTSIDE_DHAKA_FEE } from "../constants.js";
@@ -185,6 +185,13 @@ const createOrder = async (req, res) => {
             }
         });
 
+        //clear cart after make order
+        try {
+            await ClearCart(token);
+        } catch (clearCartError) {
+            console.error("Failed to clear cart after order creation:", clearCartError?.message || clearCartError);
+        }
+
         return res.status(201).json({
             success: true,
             message: "Order created successfully.",
@@ -352,7 +359,7 @@ const buyNowDirectly = async (req, res) => {
         const shippingFee = isDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
 
         const total = subtotal + shippingFee;
-    
+
 
         // Save order, items and shipping snapshot
         const orderNumber = generateOrderNumber();
