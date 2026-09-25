@@ -134,11 +134,11 @@ const formatListProduct = (product) => {
         category_id: product.categoryId,
         url_slug: product.urlSlug,
         status: product.status,
-        category_name: product.category?.categoryName ?? null,
-        category_slug: product.category?.urlSlug ?? null,
-        brand_id: product.brand?.id ?? null,
-        brand_name: product.brand?.brandName ?? null,
-        brand_logo: product.brand?.logo ?? null,
+        category_name: product.categoryName ?? null,
+        category_slug: product.categorySlug ?? null,
+        brand_id: product.brandId ?? null,
+        brand_name: product.brandName ?? null,
+        brand_logo: product.brandLogo ?? null,
         total_variants: variants.length,
         variant_ids: variants.map(({ id }) => id),
         sizes: variants.map(({ sizes }) => sizes),
@@ -291,227 +291,195 @@ const createProduct = async (req, res) => {
 
 //Raw sql Query For Read data
 const getAllProducts = async (req, res) => {
+  try {
+    // Set HTTP Cache
+    res.set("Cache-Control", "public, max-age=60");
+
+    const { page, limit, search, offset } = getPagination(req);
+
+    const cacheKey = `products:list:${JSON.stringify({
+      page,
+      limit,
+      search,
+    })}`;
+
+    // 1. Try Redis Cache
     try {
-        // HTTP Cache
-        res.set("Cache-Control", "public, max-age=60");
+      const cachedProducts = await redis.get(cacheKey);
 
-        const { page, limit, search, offset } = getPagination(req);
+      if (cachedProducts) {
+        const parsed =
+          typeof cachedProducts === "string"
+            ? JSON.parse(cachedProducts)
+            : cachedProducts;
 
-        const cacheKey = `products:list:${JSON.stringify({
-            page,
-            limit,
-            search
-        })}`;
+        console.log(`products served from Redis (key: ${cacheKey})`);
+        return res.status(200).json(parsed);
+      }
 
-        // Try Redis cache first
-        try {
-            const cachedProducts = await redis.get(cacheKey);
+      console.log(`Fetching products from database (key: ${cacheKey})`);
+    } catch (redisErr) {
+      console.error(
+        "[Redis] GET failed, falling back to database:",
+        redisErr.message
+      );
+    }
 
-            if (cachedProducts) {
-                const parsed =
-                    typeof cachedProducts === "string"
-                        ? JSON.parse(cachedProducts)
-                        : cachedProducts;
+    // 2. Query Database
+    const searchTerm = search ? `%${search}%` : null;
 
-                console.log(
-                    `products served from Redis (key: ${cacheKey})`
-                );
-
-                return res.status(200).json(parsed);
-            }
-
-            console.log(
-                `Fetching products from database (key: ${cacheKey})`
-            );
-        } catch (redisErr) {
-            console.error(
-                "[Redis] GET failed, falling back to database:",
-                redisErr.message
-            );
-        }
-
-        // Search condition
-        const searchTerm = search
-            ? `%${search}%`
-            : null;
-
-
-
-        const [countResult, products] = await Promise.all([
-            prisma.$queryRaw`
+    const [countResult, products] = await Promise.all([
+      // Query 1: Total Count
+      prisma.$queryRaw`
         SELECT COUNT(*)::int AS total
         FROM products p
         WHERE p.deleted_at IS NULL
-        ${searchTerm
-                    ? Prisma.sql`
-                    AND (
-                        p.product_name ILIKE ${searchTerm}
-                        OR p.short_description ILIKE ${searchTerm}
-                        OR p.description ILIKE ${searchTerm}
-                    )
-                `
-                    : Prisma.empty
-                }
-    `,
+        ${
+          searchTerm
+            ? Prisma.sql`
+                AND (
+                    p.product_name ILIKE ${searchTerm}
+                    OR p.short_description ILIKE ${searchTerm}
+                    OR p.description ILIKE ${searchTerm}
+                )
+            `
+            : Prisma.empty
+        }
+      `,
 
-            prisma.$queryRaw`
+      // Query 2: Product Records with joins and nested JSON variants
+      prisma.$queryRaw`
         SELECT
             p.id,
-            p.product_name        AS "productName",
-            p.short_description   AS "shortDescription",
+            p.product_name         AS "productName",
+            p.short_description    AS "shortDescription",
             p.description,
             p.price,
-            p.stock_quantity      AS "stockQuantity",
-            p.category_id         AS "categoryId",
-            p.url_slug            AS "urlSlug",
+            p.stock_quantity       AS "stockQuantity",
+            p.category_id          AS "categoryId",
+            p.brand_id             AS "brandId",
+            p.url_slug             AS "urlSlug",
             p.status,
 
-            CASE
-                WHEN c.id IS NOT NULL THEN
-                    jsonb_build_object(
-                        'id', c.id,
-                        'category_name', c.category_name,
-                        'url_slug', c.url_slug
-                    )
-                ELSE NULL
-            END AS category,
+            -- Direct Category Columns
+            c.category_name        AS "categoryName",
+            c.url_slug             AS "categorySlug",
 
-            CASE
-                WHEN b.id IS NOT NULL THEN
-                    jsonb_build_object(
-                        'id', b.id,
-                        'brand_name', b.brand_name
-                    )
-                ELSE NULL
-            END AS brand,
+            -- Direct Brand Columns
+            b.brand_name           AS "brandName",
+            b.logo                 AS "brandLogo",
 
+            -- Aggregated Variants with image relation
             COALESCE(
-    (
-        SELECT jsonb_agg(
-            jsonb_build_object(
-                'id', v.id,
-                'stockQuantity', v.stock_quantity,
-                'price', v.price,
-                'colors', v.colors,
-                'images', (
-                    SELECT COALESCE(jsonb_agg(
-                        jsonb_build_object(
-                            'id', i.id,
-                            'imageUrl', i.image_url,
-                            'sortOrder', i.sort_order
-                        ) ORDER BY i.sort_order ASC
-                    ), '[]'::jsonb)
-                    FROM variant_images i
-                    WHERE i.product_variant_id = v.id AND i.deleted_at IS NULL
+              (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'id', v.id,
+                        'stockQuantity', v.stock_quantity,
+                        'price', v.price,
+                        'colors', v.colors,
+                        'sizes', v.sizes,
+                        'images', (
+                            SELECT COALESCE(jsonb_agg(
+                                jsonb_build_object(
+                                    'id', i.id,
+                                    'imageUrl', i.image_url,
+                                    'sortOrder', i.sort_order
+                                ) ORDER BY i.sort_order ASC
+                            ), '[]'::jsonb)
+                            FROM variant_images i
+                            WHERE i.product_variant_id = v.id AND i.deleted_at IS NULL
+                        )
+                    )
+                    ORDER BY v.id DESC
                 )
-            )
-            ORDER BY v.id DESC
-        )
-        FROM product_variants v
-        WHERE
-            v.product_id = p.id
-            AND v.deleted_at IS NULL
-    ),
-    '[]'::jsonb
-) AS variants
+                FROM product_variants v
+                WHERE
+                    v.product_id = p.id
+                    AND v.deleted_at IS NULL
+              ),
+              '[]'::jsonb
+            ) AS variants
 
         FROM products p
 
         LEFT JOIN categories c
-            ON c.id = p.category_id
+            ON c.id = p.category_id AND c.deleted_at IS NULL
 
         LEFT JOIN brands b
             ON b.id = p.brand_id
 
         WHERE
             p.deleted_at IS NULL
-
-            ${searchTerm
-                    ? Prisma.sql`
-                        AND (
-                            p.product_name ILIKE ${searchTerm}
-                            OR p.short_description ILIKE ${searchTerm}
-                            OR p.description ILIKE ${searchTerm}
-                        )
-                    `
-                    : Prisma.empty
-                }
+            ${
+              searchTerm
+                ? Prisma.sql`
+                    AND (
+                        p.product_name ILIKE ${searchTerm}
+                        OR p.short_description ILIKE ${searchTerm}
+                        OR p.description ILIKE ${searchTerm}
+                    )
+                `
+                : Prisma.empty
+            }
 
         ORDER BY p.created_at DESC
-
         OFFSET ${offset}
         LIMIT ${limit}
-    `
-        ]);
+      `,
+    ]);
 
-        const totalProducts = countResult[0]?.total || 0;
+    const totalProducts = countResult[0]?.total || 0;
+    const totalPages = Math.ceil(totalProducts / limit);
 
-        const totalPages = Math.ceil(
-            totalProducts / limit
-        );
+    // Format products
+    const formattedProducts = products.map(formatListProduct);
 
-        const formattedProducts = products.map(
-            formatListProduct
-        );
+    const responsePayload = {
+      success: true,
+      message: formattedProducts.length
+        ? "Products fetched successfully."
+        : "No products found.",
 
-        const responsePayload = {
-            success: true,
+      meta: {
+        total_products: totalProducts,
+        total_pages: totalPages,
+        current_page: page,
+        per_page: limit,
+        search,
+      },
 
-            message: formattedProducts.length
-                ? "Products fetched successfully."
-                : "No products found.",
+      all_products: serializeBigInt(formattedProducts),
 
-            meta: {
-                total_products: totalProducts,
-                total_pages: totalPages,
-                current_page: page,
-                per_page: limit,
-                search
-            },
+      links: buildPaginationLinks("/api/v1/products", {
+        page,
+        limit,
+        totalPages,
+        search,
+      }),
+    };
 
-            all_products: serializeBigInt(
-                formattedProducts
-            ),
-
-            links: buildPaginationLinks(
-                "/api/v1/products",
-                {
-                    page,
-                    limit,
-                    totalPages,
-                    search
-                }
-            )
-        };
-
-        // Store response in Redis
-        try {
-            await redis.set(
-                cacheKey,
-                JSON.stringify(responsePayload),
-                {
-                    ex: PRODUCTS_CACHE_TTL
-                }
-            );
-        } catch (redisErr) {
-            console.error(
-                "[Redis] SET failed, response served without caching:",
-                redisErr.message
-            );
-        }
-
-        return res
-            .status(200)
-            .json(responsePayload);
-
-    } catch (error) {
-        return handleError(
-            res,
-            error,
-            "Get All Products Error",
-            "Failed to retrieve products."
-        );
+    // 3. Store Result in Redis Cache
+    try {
+      await redis.set(cacheKey, JSON.stringify(responsePayload), {
+        ex: PRODUCTS_CACHE_TTL,
+      });
+    } catch (redisErr) {
+      console.error(
+        "[Redis] SET failed, response served without caching:",
+        redisErr.message
+      );
     }
+
+    return res.status(200).json(responsePayload);
+  } catch (error) {
+    return handleError(
+      res,
+      error,
+      "Get All Products Error",
+      "Failed to retrieve products."
+    );
+  }
 };
 
 

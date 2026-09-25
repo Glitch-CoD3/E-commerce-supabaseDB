@@ -7,9 +7,16 @@ import { useMemo, useState } from "react";
 import { addToCart } from "../services/cart.service.js";
 
 const ProductCard = ({ product }) => {
-  // Ensure sizes and colors are always valid arrays
-  const availableSizes = useMemo(() => product.sizes ?? [], [product.sizes]);
-  const availableColors = useMemo(() => product.colors ?? [], [product.colors]);
+  // Ensure sizes and colors are valid non-null string arrays
+  const availableSizes = useMemo(() => {
+    const sizes = Array.isArray(product.sizes) ? product.sizes : [];
+    return sizes.filter((size) => size !== null && size !== undefined && size !== "");
+  }, [product.sizes]);
+
+  const availableColors = useMemo(() => {
+    const colors = Array.isArray(product.colors) ? product.colors : [];
+    return colors.filter((color) => color !== null && color !== undefined && color !== "");
+  }, [product.colors]);
 
   const [productTypes, setProductTypes] = useState({
     size: availableSizes[0] ?? "",
@@ -17,9 +24,6 @@ const ProductCard = ({ product }) => {
   });
 
   const [isAdding, setIsAdding] = useState(false);
-
-  // Extend interface for JSON string fields from SQL
-  const variantProduct = product;
 
   // Safe parsing helper
   const parseJsonArray = (data) => {
@@ -33,38 +37,34 @@ const ProductCard = ({ product }) => {
   };
 
   const variantIds = useMemo(
-    () => parseJsonArray(variantProduct.variant_ids),
-    [variantProduct.variant_ids]
+    () => parseJsonArray(product.variant_ids),
+    [product.variant_ids]
   );
-  
+
   const prices = useMemo(
-    () => parseJsonArray(variantProduct.variant_prices).map(Number),
-    [variantProduct.variant_prices]
+    () => parseJsonArray(product.variant_prices).map(Number),
+    [product.variant_prices]
   );
-  
+
   const stocks = useMemo(
-    () => parseJsonArray(variantProduct.variant_stocks).map(Number),
-    [variantProduct.variant_stocks]
+    () => parseJsonArray(product.variant_stocks).map(Number),
+    [product.variant_stocks]
   );
 
   // Calculate variant index matching BOTH size and color
   const getVariantIndex = (selectedSize, selectedColor) => {
-    // If variants are 1D (only color or only size)
     if (availableSizes.length === 0 || availableColors.length === 0) {
       const colorIdx = availableColors.indexOf(selectedColor);
       const sizeIdx = availableSizes.indexOf(selectedSize);
       return colorIdx !== -1 ? colorIdx : sizeIdx !== -1 ? sizeIdx : 0;
     }
 
-    // Grid formula for 2D variants (size x color matrix)
     const sizeIndex = availableSizes.indexOf(selectedSize);
     const colorIndex = availableColors.indexOf(selectedColor);
 
     if (sizeIndex === -1 || colorIndex === -1) return 0;
 
     const calculatedIndex = sizeIndex * availableColors.length + colorIndex;
-    
-    // Bounds check
     return calculatedIndex < variantIds.length ? calculatedIndex : colorIndex;
   };
 
@@ -73,7 +73,6 @@ const ProductCard = ({ product }) => {
     productTypes.color
   );
 
-  // Active variant properties
   const currentVariantId = variantIds[currentVariantIndex];
   const currentPrice =
     prices[currentVariantIndex] ?? Number(product.price || 0);
@@ -107,6 +106,12 @@ const ProductCard = ({ product }) => {
     }
   };
 
+  // Safely retrieve product image
+  const productImage =
+    product.images?.[productTypes.color] ||
+    (Array.isArray(product.images) ? product.images[0] : null) ||
+    "/placeholder.png";
+
   return (
     <div className="shadow-lg rounded-lg overflow-hidden flex flex-col bg-white">
       <Link
@@ -114,7 +119,7 @@ const ProductCard = ({ product }) => {
         className="relative h-72 w-full overflow-hidden block bg-gray-100"
       >
         <Image
-          src={product.images?.[productTypes.color] || "/placeholder.png"}
+          src={productImage}
           alt={product.name || "Product image"}
           fill
           sizes="(max-width: 640px) 100vw, 100vw"
@@ -123,14 +128,12 @@ const ProductCard = ({ product }) => {
           className="object-cover hover:scale-105 transition-transform duration-300"
         />
 
-        {/* Brand Name - Top Left */}
         {product.brand_name && (
           <span className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm text-gray-800 text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm">
             {product.brand_name}
           </span>
         )}
 
-        {/* Stock Badge - Top Right */}
         {isSelectedVariantOutOfStock ? (
           <span className="absolute top-3 right-3 bg-red-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-sm">
             Out of Stock
@@ -143,7 +146,6 @@ const ProductCard = ({ product }) => {
       </Link>
 
       <div className="flex flex-col gap-4 p-4">
-        {/* Product Name & Description */}
         <div>
           <h1 className="text-[17px] font-semibold tracking-tight text-gray-900 line-clamp-1">
             {product.name}
@@ -153,14 +155,12 @@ const ProductCard = ({ product }) => {
           </p>
         </div>
 
-        {/* Sizes & Colors */}
         {(availableSizes.length > 0 || availableColors.length > 0) && (
           <div className="flex items-center justify-between gap-4 text-xs">
             {/* Sizes */}
             {availableSizes.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">Size</span>
-
                 <select
                   name="size"
                   id={`size-${product.id}`}
@@ -173,8 +173,8 @@ const ProductCard = ({ product }) => {
                     })
                   }
                 >
-                  {availableSizes.map((size) => (
-                    <option key={size} value={size}>
+                  {availableSizes.map((size, index) => (
+                    <option key={`${size}-${index}`} value={size}>
                       {size}
                     </option>
                   ))}
@@ -186,28 +186,26 @@ const ProductCard = ({ product }) => {
             {availableColors.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-gray-500">Colors</span>
-
                 <div className="flex items-center gap-1">
-                  {availableColors.map((color) => {
+                  {availableColors.map((color, index) => {
                     const colorIdx = getVariantIndex(
                       productTypes.size,
                       color
                     );
-
                     const colorStock = stocks[colorIdx] ?? 0;
                     const isColorOutOfStock = colorStock <= 0;
 
                     return (
                       <button
                         type="button"
-                        key={color}
+                        key={`${color}-${index}`}
                         onClick={() =>
                           handleProductTypes({
                             type: "color",
                             value: color,
                           })
                         }
-                        title={`${color.toUpperCase()} (${colorStock} in stock)`}
+                        title={`${String(color).toUpperCase()} (${colorStock} in stock)`}
                         className={`relative border-2 ${
                           productTypes.color === color
                             ? "border-gray-500"
@@ -216,9 +214,7 @@ const ProductCard = ({ product }) => {
                       >
                         <div
                           className={`w-6 h-6 rounded-full ${
-                            isColorOutOfStock
-                              ? "opacity-30"
-                              : "opacity-100"
+                            isColorOutOfStock ? "opacity-30" : "opacity-100"
                           }`}
                           style={{ backgroundColor: color }}
                         />
