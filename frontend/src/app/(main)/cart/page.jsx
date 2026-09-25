@@ -16,19 +16,13 @@ import { toast } from "react-toastify";
 import { handleApiError } from "../../../services/handleApiError.js";
 
 import {
-  getAllCarts,
+  FetchCart,
   updateCartQuantity,
   removeCartItem,
   clearCart,
 } from "../../../services/cart.service.js";
-
-import {
-  getProductById,
-  getProductByVarientId,
-  getVariantImageById,
-} from "../../../services/product.service.js";
-
-
+import { getme } from "../../../services/user.service.js";
+import { getUserShippingAddress } from "../../../services/order.service.js";
 
 const steps = [
   { id: 1, title: "Shopping Cart" },
@@ -36,8 +30,14 @@ const steps = [
   { id: 3, title: "Payment Method" },
 ];
 
-const INSIDE_DHAKA_FEE = 70;
-const OUTSIDE_DHAKA_FEE = 120;
+const INSIDE_DHAKA_FEE = 120;
+const OUTSIDE_DHAKA_FEE = 70;
+
+// Only the state field decides the zone — free text (full_address) can
+// contain "dhaka" as a stray substring for unrelated reasons and must
+// not affect pricing. This must match ShippingForm and the backend.
+const isDhakaAddress = ({ state } = {}) =>
+  (state || "").trim().toLowerCase() === "dhaka";
 
 const CartPage = () => {
   const [shippingForm, setShippingForm] = useState(null);
@@ -46,10 +46,9 @@ const CartPage = () => {
   const [updatingItemId, setUpdatingItemId] = useState(null);
   const [isClearing, setIsClearing] = useState(false);
 
-  // Delivery zone selection (client-side only, no network cost)
-  const [insideDhaka, setInsideDhaka] = useState(true);
+  const [defaultAddress, setDefaultAddress] = useState(null);
+  const [addressLoading, setAddressLoading] = useState(true);
 
-  // Rate Limiting Cooldown State
   const [cooldown, setCooldown] = useState(0);
   const isFetchingCart = useRef(false);
 
@@ -57,120 +56,85 @@ const CartPage = () => {
   const router = useRouter();
   const activeStep = parseInt(searchParams.get("step") || "1", 10);
 
-  // Cooldown countdown timer
   useEffect(() => {
     if (cooldown <= 0) return;
     const timer = setInterval(() => setCooldown((prev) => prev - 1), 1000);
     return () => clearInterval(timer);
   }, [cooldown]);
 
-  // Fetch Cart Items
- const fetchCart = useCallback(async () => {
-  if (isFetchingCart.current) return;
+  const fetchCart = useCallback(async () => {
+    if (isFetchingCart.current) return;
 
-  try {
-    isFetchingCart.current = true;
-    setLoading(true);
+    try {
+      isFetchingCart.current = true;
+      setLoading(true);
 
-    const res = await getAllCarts();
-    const rawItems = Array.isArray(res)
-      ? res
-      : res?.data || [];
+      const res = await FetchCart();
+      const rawItems = Array.isArray(res) ? res : res?.data || [];
 
-    const populatedItems = await Promise.all(
-      rawItems.map(async (item) => {
-        let productData = null;
-        let variantDetails = null;
-        let imageUrl = null;
-
-        if (item.product_id) {
-          try {
-            const productRes =
-              await getProductById(item.product_id);
-
-            productData = productRes?.product || null;
-          } catch (err) {
-            console.error(
-              `Failed to load product ID: ${item.product_id}`,
-              err
-            );
-          }
-        }
-
-        if (item.product_variant_id) {
-          try {
-            const variantRes =
-              await getProductByVarientId(
-                Number(item.product_variant_id)
-              );
-
-            variantDetails =
-              variantRes?.product_varient || null;
-
-            const imageRes =
-              await getVariantImageById(
-                Number(item.product_variant_id)
-              );
-
-            if (
-              imageRes?.data &&
-              Array.isArray(imageRes.data) &&
-              imageRes.data.length > 0
-            ) {
-              imageUrl =
-                imageRes.data[0]?.image_url || null;
-            }
-          } catch (err) {
-            console.error(
-              `Failed to load variant details for ID: ${item.product_variant_id}`,
-              err
-            );
-          }
-        }
-
-        if (
-          !imageUrl &&
-          productData?.images &&
-          variantDetails?.colors
-        ) {
-          imageUrl =
-            productData.images[variantDetails.colors] || null;
-        }
+      const populatedItems = rawItems.map((item) => {
+        const imageUrl = item.variant?.images?.[0]?.imageUrl || null;
 
         return {
           ...item,
-          productData,
-          variantDetails,
+          productData: item.product || null,
+          variantDetails: item.variant || null,
           imageUrl,
         };
-      })
-    );
+      });
 
-    setCartItems(populatedItems);
+      setCartItems(populatedItems);
+    } catch (error) {
+      handleApiError(error, {
+        onRateLimit: (sec) => setCooldown(sec),
+      });
 
-  } catch (error) {
-    handleApiError(error, {
-      onRateLimit: (sec) => setCooldown(sec),
-    });
-
-    setCartItems([]);
-
-  } finally {
-    isFetchingCart.current = false;
-    setLoading(false);
-  }
-}, []);
+      setCartItems([]);
+    } finally {
+      isFetchingCart.current = false;
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchCart();
   }, [fetchCart]);
 
-  // Update Cart Quantity
-  const handleUpdateQuantity = async (
-    id,
-    currentQuantity,
-    change
-  ) => {
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAddress = async () => {
+      try {
+        setAddressLoading(true);
+        const userRes = await getme();
+        const userId = userRes?.user?.id;
+
+        if (!userId) {
+          if (isMounted) setDefaultAddress(null);
+          return;
+        }
+
+        const res = await getUserShippingAddress(userId);
+        const addresses = Array.isArray(res) ? res : res?.data || res?.addresses || [];
+        const defaultAddr = addresses.find((a) => a.is_default) ?? addresses[0] ?? null;
+
+        if (isMounted) setDefaultAddress(defaultAddr);
+      } catch (error) {
+        handleApiError(error, { onRateLimit: (sec) => setCooldown(sec) });
+        if (isMounted) setDefaultAddress(null);
+      } finally {
+        if (isMounted) setAddressLoading(false);
+      }
+    };
+
+    fetchAddress();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleUpdateQuantity = async (id, currentQuantity, change) => {
     if (cooldown > 0) return;
 
     const newQuantity = currentQuantity + change;
@@ -188,7 +152,6 @@ const CartPage = () => {
     }
   };
 
-  // Remove Cart Item
   const handleDeleteItem = async (id) => {
     if (cooldown > 0) return;
 
@@ -204,7 +167,6 @@ const CartPage = () => {
     }
   };
 
-  // Clear Entire Cart
   const handleClearCart = async () => {
     if (cooldown > 0) return;
 
@@ -220,21 +182,36 @@ const CartPage = () => {
     }
   };
 
-  // Derived values — memoized, no effects, no re-fetch, no loop risk
   const subtotal = useMemo(() => {
     return cartItems.reduce((acc, item) => {
-      const priceStr = item.variantDetails?.price || item.productData?.price || "0";
-      const priceNum = parseFloat(priceStr);
+      const priceVal = item.variantDetails?.price ?? 0;
+      const priceNum = typeof priceVal === "number" ? priceVal : parseFloat(priceVal) || 0;
       return acc + priceNum * item.quantity;
     }, 0);
   }, [cartItems]);
 
   const discount = 0;
 
+  const effectiveAddress = useMemo(() => {
+    if (shippingForm) {
+      return {
+        city: shippingForm.city,
+        state: shippingForm.state,
+        full_address: shippingForm.address,
+      };
+    }
+    return defaultAddress;
+  }, [shippingForm, defaultAddress]);
+
+  const isDhaka = useMemo(() => {
+    if (!effectiveAddress) return null;
+    return isDhakaAddress(effectiveAddress);
+  }, [effectiveAddress]);
+
   const shippingFee = useMemo(() => {
-    if (cartItems.length === 0) return 0;
-    return insideDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
-  }, [cartItems.length, insideDhaka]);
+    if (cartItems.length === 0 || isDhaka === null) return 0;
+    return isDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
+  }, [cartItems.length, isDhaka]);
 
   const totalAmount = useMemo(() => {
     return Math.max(0, subtotal - discount + shippingFee);
@@ -244,19 +221,16 @@ const CartPage = () => {
     <div className="mt-12 flex flex-col items-center justify-center gap-8 max-w-6xl mx-auto px-4">
       <h1 className="text-2xl font-medium">Your Shopping Cart</h1>
 
-      {/* STEPS */}
       <div className="flex flex-col items-center gap-8 lg:flex-row lg:gap-16">
         {steps.map((step) => (
           <div
-            className={`flex items-center gap-2 pb-4 border-b-2 ${
-              step.id === activeStep ? "border-gray-800" : "border-gray-200"
-            }`}
+            className={`flex items-center gap-2 pb-4 border-b-2 ${step.id === activeStep ? "border-gray-800" : "border-gray-200"
+              }`}
             key={step.id}
           >
             <div
-              className={`w-6 h-6 rounded-full text-white p-4 flex items-center justify-center ${
-                step.id === activeStep ? "bg-gray-800" : "bg-gray-400"
-              }`}
+              className={`w-6 h-6 rounded-full text-white p-4 flex items-center justify-center ${step.id === activeStep ? "bg-gray-800" : "bg-gray-400"
+                }`}
             >
               {step.id}
             </div>
@@ -268,7 +242,6 @@ const CartPage = () => {
       </div>
 
       <div className="w-full flex flex-col lg:flex-row gap-8">
-        {/* LEFT COLUMN */}
         <div className="w-full lg:w-7/12 shadow-lg border border-gray-100 p-8 rounded-lg flex flex-col gap-8">
           {activeStep === 1 && (
             <>
@@ -299,8 +272,8 @@ const CartPage = () => {
                 cartItems.map((item) => {
                   const product = item.productData;
                   const variant = item.variantDetails;
-                  const itemPrice = parseFloat(variant?.price || product?.price || "0");
-                  const rawStock = variant?.stock_quantity ?? product?.quantity;
+                  const itemPrice = parseFloat(variant?.price ?? product?.price ?? "0");
+                  const rawStock = variant?.stockQuantity ?? product?.stockQuantity;
                   const availableStock = rawStock !== undefined ? Number(rawStock) : Infinity;
 
                   return (
@@ -313,7 +286,7 @@ const CartPage = () => {
                           {item.imageUrl ? (
                             <Image
                               src={item.imageUrl}
-                              alt={product?.product_name || "Product image"}
+                              alt={product?.productName || "Product image"}
                               fill
                               className="object-contain"
                             />
@@ -327,7 +300,7 @@ const CartPage = () => {
                         <div className="flex flex-col justify-between max-w-xs">
                           <div>
                             <p className="text-sm font-medium">
-                              {product?.product_name || `Product #${item.product_id}`}
+                              {product?.productName || `Product #${item.product_id}`}
                             </p>
 
                             <div className="mt-1 space-y-0.5">
@@ -349,7 +322,6 @@ const CartPage = () => {
                             </div>
                           </div>
 
-                          {/* QUANTITY CONTROLS */}
                           <div className="flex items-center gap-3 mt-3">
                             <button
                               onClick={() => handleUpdateQuantity(item.id, item.quantity, -1)}
@@ -408,13 +380,12 @@ const CartPage = () => {
 
           {activeStep === 3 &&
             (shippingForm ? (
-              <PaymentForm />
+              <PaymentForm shippingForm={shippingForm} cartItems={cartItems} subtotal={subtotal} />
             ) : (
               <p className="text-red-500">Please fill in the shipping form to continue.</p>
             ))}
         </div>
 
-        {/* RIGHT COLUMN */}
         <div className="w-full lg:w-5/12 shadow-lg border-2 border-gray-100 p-8 rounded-lg flex flex-col gap-8 h-max">
           <h2 className="font-semibold">Cart Details</h2>
 
@@ -429,36 +400,40 @@ const CartPage = () => {
               <p className="font-medium">TK.{discount.toFixed(2)}</p>
             </div>
 
-            {/* Delivery Zone Selector */}
             {cartItems.length > 0 && (
               <div className="flex flex-col gap-2 text-sm">
                 <p className="text-gray-500">Delivery Location</p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setInsideDhaka(true)}
-                    aria-pressed={insideDhaka}
-                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors cursor-pointer ${
-                      insideDhaka
-                        ? "bg-gray-800 text-white border-gray-800"
-                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                    }`}
-                  >
-                    Inside Dhaka (TK {INSIDE_DHAKA_FEE})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInsideDhaka(false)}
-                    aria-pressed={!insideDhaka}
-                    className={`flex-1 text-xs py-2 rounded-lg border transition-colors cursor-pointer ${
-                      !insideDhaka
-                        ? "bg-gray-800 text-white border-gray-800"
-                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                    }`}
-                  >
-                    Outside Dhaka (TK {OUTSIDE_DHAKA_FEE})
-                  </button>
-                </div>
+                {addressLoading && !shippingForm ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Detecting location...
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <div
+                      className={`flex-1 text-xs py-2 rounded-lg border text-center transition-colors ${
+                        isDhaka === true
+                          ? "bg-green-600 text-white border-green-600"
+                          : "bg-gray-50 text-gray-400 border-gray-200"
+                      }`}
+                    >
+                      Inside Dhaka (TK {INSIDE_DHAKA_FEE})
+                    </div>
+                    <div
+                      className={`flex-1 text-xs py-2 rounded-lg border text-center transition-colors ${
+                        isDhaka === false
+                          ? "bg-green-600 text-white border-green-600"
+                          : "bg-gray-50 text-gray-400 border-gray-200"
+                      }`}
+                    >
+                      Outside Dhaka (TK {OUTSIDE_DHAKA_FEE})
+                    </div>
+                  </div>
+                )}
+                {!addressLoading && !effectiveAddress && (
+                  <p className="text-xs text-amber-600">
+                    No saved address found — please add a shipping address to calculate delivery fee.
+                  </p>
+                )}
               </div>
             )}
 

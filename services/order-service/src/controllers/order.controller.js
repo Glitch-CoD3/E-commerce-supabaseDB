@@ -3,6 +3,7 @@ import prisma from "../config/prisma.js";
 import { getAllCart } from "../utils/axiosClient.js";
 import { getProductsByIds, getProductByVariantId, getProductVarientImage } from "../utils/product.api.js";
 import { getShippingAddress } from "../utils/getShippingAddress.api.js";
+import { INSIDE_DHAKA_FEE, OUTSIDE_DHAKA_FEE } from "../constants.js";
 
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
@@ -39,7 +40,6 @@ const getPagination = (req, defaultLimit = 10) => {
 
 const generateOrderNumber = () => `ORD-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-const getShippingFee = (state) => (state?.toLowerCase() === "dhaka" ? 60 : 120);
 
 // Product API responses use different keys depending on the endpoint
 const getProductName = (product) => product.product_name ?? product.name;
@@ -57,6 +57,7 @@ import { formatOrder, createOrderWithItems, formatShippingAddress, formatOrderIt
  * @description Create a new order for the authenticated user from their cart.
  * @access Private (Authenticated User)
  */
+
 const createOrder = async (req, res) => {
     try {
         const user_id = getUserId(req);
@@ -150,20 +151,21 @@ const createOrder = async (req, res) => {
 
         const shippingAddresses = await getShippingAddress(user_id);
 
-
-        if (!shippingAddresses) {
-            return sendError(res, 404, "Shipping address not found");
-        }
-
         const shippingAddress =
             shippingAddresses.find((address) => address.is_default) ??
             shippingAddresses[0];
 
-
         const ShippingState = order_shipping_Address.state || shippingAddress.state;
-        const shippingFee = getShippingFee(ShippingState);
-        const total = subtotal + shippingFee;
+        const ShippingCity = order_shipping_Address.city || shippingAddress.city;
+        const ShippingFullAddress = order_shipping_Address.full_address || shippingAddress.full_address;
 
+        // Calculate shipping fee based on whether Dhaka is present in state, city, or address
+        const isDhaka = [ShippingState, ShippingCity, ShippingFullAddress].some((location) =>
+            location?.toLowerCase().includes("dhaka")
+        );
+        const shippingFee = isDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
+
+        const total = subtotal + shippingFee;
 
         // 5. Save order, items and shipping snapshot
         const order = await createOrderWithItems({
@@ -329,8 +331,28 @@ const buyNowDirectly = async (req, res) => {
 
         // Calculate amounts
         const subtotal = orderItems.reduce((sum, item) => sum + item.total_amount, 0);
-        const shippingFee = getShippingFee(state);
+        const shippingAddresses = await getShippingAddress(user_id);
+
+        if (!shippingAddresses) {
+            return sendError(res, 404, "Shipping address not found");
+        }
+
+        const shippingAddress =
+            shippingAddresses.find((address) => address.is_default) ??
+            shippingAddresses[0];
+
+        const ShippingState = order_shipping_Address.state || shippingAddress.state;
+        const ShippingCity = order_shipping_Address.city || shippingAddress.city;
+        const ShippingFullAddress = order_shipping_Address.full_address || shippingAddress.full_address;
+
+        // Calculate shipping fee based on whether Dhaka is present in state, city, or address
+        const isDhaka = [ShippingState, ShippingCity, ShippingFullAddress].some((location) =>
+            location?.toLowerCase().includes("dhaka")
+        );
+        const shippingFee = isDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
+
         const total = subtotal + shippingFee;
+    
 
         // Save order, items and shipping snapshot
         const orderNumber = generateOrderNumber();

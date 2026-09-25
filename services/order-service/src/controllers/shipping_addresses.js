@@ -229,25 +229,10 @@ const getShippingAddressById = async (req, res) => {
 const getShippingAddress = async (req, res) => {
     try {
 
-        res.set("Cache-Control", "private, max-age=60");
-
         const user_id = parseId(req.params.id);
 
         if (!user_id) {
             return sendError(res, 400, "Valid user ID is required.");
-        }
-
-        const cacheKey = `shipping:addresses:${user_id}`;
-
-        try {
-            const cachedAddresses = await redis.get(cacheKey);
-            if (cachedAddresses) {
-                console.log(`[Redis] Cache HIT — shipping addresses served from Redis (key: ${cacheKey})`);
-                return res.status(200).json(cachedAddresses);
-            }
-            console.log(`[Redis] Cache MISS — fetching shipping addresses from database (key: ${cacheKey})`);
-        } catch (redisErr) {
-            console.error("[Redis] GET failed, falling back to database:", redisErr.message);
         }
 
         const addresses = await prisma.shippingAddress.findMany({
@@ -263,13 +248,6 @@ const getShippingAddress = async (req, res) => {
             success: true,
             addresses: serialize(addresses.map(formatShippingAddress))
         };
-
-        try {
-            await redis.set(cacheKey, serialize(responsePayload), { ex: ADDRESS_CACHE_TTL });
-            console.log(`[Redis] Shipping addresses cached for ${ADDRESS_CACHE_TTL}s (key: ${cacheKey})`);
-        } catch (redisErr) {
-            console.error("[Redis] SET failed, response served without caching:", redisErr.message);
-        }
 
         return res.status(200).json(responsePayload);
     } catch (error) {

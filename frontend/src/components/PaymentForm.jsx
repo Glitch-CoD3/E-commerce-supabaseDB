@@ -1,7 +1,7 @@
 "use client";
 
-import { useSearchParams } from "next/navigation.js";
-import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   createOrder,
   getShippingAddressByAddressId,
@@ -22,53 +22,51 @@ const PaymentForm = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createOrderResponse, setCreateOrderResponse] = useState(null);
 
-  // Prevent duplicate requests
-  const addressRequestRef = useRef(null);
-  const orderSubmittingRef = useRef(false);
-
   // 1. Fetch Shipping Address
   useEffect(() => {
     if (!addressId) {
       setAddressDetails(null);
+      setAddressError("No shipping address selected. Please go back to Step 2.");
       return;
     }
 
-    const currentAddressId = Number(addressId);
-
-    if (!Number.isInteger(currentAddressId) || currentAddressId <= 0) {
-      setAddressError("Invalid shipping address.");
+    const parsedAddressId = Number(addressId);
+    if (!Number.isInteger(parsedAddressId) || parsedAddressId <= 0) {
+      setAddressError("Invalid shipping address ID.");
       return;
     }
 
-    // Prevent same address from being requested repeatedly
-    if (addressRequestRef.current === currentAddressId) {
-      return;
-    }
-
-    addressRequestRef.current = currentAddressId;
-
-    let cancelled = false;
+    let isCancelled = false;
 
     const fetchAddress = async () => {
       try {
         setLoadingAddress(true);
         setAddressError("");
 
-        const res = await getShippingAddressByAddressId(Number(addressId));
+        const res = await getShippingAddressByAddressId(parsedAddressId);
 
-        if (res?.success && res?.address) {
-          setAddressDetails(res.address);
+        if (isCancelled) return;
+
+        // Flexible resolution for API payload structure
+        const address =
+          res?.address || res?.data?.address || res?.data || (res?.id ? res : null);
+
+        if (address && typeof address === "object") {
+          setAddressDetails(address);
         } else {
           setAddressError("Could not load address details.");
           setAddressDetails(null);
         }
       } catch (err) {
-        setAddressError(
-          err?.response?.data?.message || "Could not load address details."
-        );
-        setAddressDetails(null);
+        if (!isCancelled) {
+          console.error("Fetch Address Error:", err);
+          setAddressError(
+            err?.response?.data?.message || "Could not load address details."
+          );
+          setAddressDetails(null);
+        }
       } finally {
-        if (!cancelled) {
+        if (!isCancelled) {
           setLoadingAddress(false);
         }
       }
@@ -77,7 +75,7 @@ const PaymentForm = () => {
     fetchAddress();
 
     return () => {
-      cancelled = true;
+      isCancelled = true;
     };
   }, [addressId]);
 
@@ -85,10 +83,7 @@ const PaymentForm = () => {
   const handleOrderSubmit = async (e) => {
     e.preventDefault();
 
-    // Prevent double click / duplicate submission
-    if (orderSubmittingRef.current || isSubmitting) {
-      return;
-    }
+    if (isSubmitting) return;
 
     if (!addressId || !addressDetails) {
       alert("No shipping address selected. Please go back to step 2.");
@@ -105,13 +100,6 @@ const PaymentForm = () => {
 
     const parsedAddressId = Number(addressId);
 
-    if (!Number.isInteger(parsedAddressId) || parsedAddressId <= 0) {
-      alert("Invalid shipping address.");
-      return;
-    }
-
-    // Lock immediately before API request
-    orderSubmittingRef.current = true;
     setIsSubmitting(true);
 
     const payload = {
@@ -128,32 +116,26 @@ const PaymentForm = () => {
     try {
       const res = await createOrder(payload);
 
-      // Existing response structure
-      const fetchedOrderId = res?.data?.orderId;
+      const fetchedOrderId =
+        res?.data?.orderId || res?.orderId || res?.data?.id || res?.id;
 
       if (!fetchedOrderId) {
         alert(res?.message || "Failed to create order. Please try again.");
         return;
       }
 
-      // Fetch only after successful order creation
+      // Fetch created order details
       const createdOrder = await getOrderByQueryId(fetchedOrderId);
-
       setCreateOrderResponse(createdOrder);
-
-    
     } catch (error) {
       console.error("Payment Submission Error:", error);
-
       const message =
         error?.response?.data?.message ||
         error?.message ||
         "An error occurred while creating the order.";
-
       alert(message);
     } finally {
       setIsSubmitting(false);
-      orderSubmittingRef.current = false;
     }
   };
 
@@ -163,19 +145,15 @@ const PaymentForm = () => {
       <div className="p-3 bg-gray-50 border rounded-lg text-xs space-y-1">
         <p className="font-semibold text-gray-700">Shipping Address Details:</p>
 
-        {!addressId && (
-          <p className="text-red-500">
-            No address selected. Please go back to Step 2.
-          </p>
-        )}
-
         {loadingAddress && (
-          <p className="text-gray-500">Loading address details...</p>
+          <p className="text-gray-500 animate-pulse">Loading address details...</p>
         )}
 
-        {addressError && <p className="text-red-500">{addressError}</p>}
+        {!loadingAddress && addressError && (
+          <p className="text-red-500 font-medium">{addressError}</p>
+        )}
 
-        {addressDetails && (
+        {!loadingAddress && addressDetails && (
           <div>
             <p className="font-medium text-gray-800">
               {addressDetails.full_address}
@@ -233,21 +211,22 @@ const PaymentForm = () => {
 
         <button
           type="submit"
-          disabled={isSubmitting || !addressId || !addressDetails}
-          className="w-full bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white p-2 rounded-lg text-sm font-medium transition"
+          disabled={isSubmitting || loadingAddress || !addressDetails}
+          className="w-full bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white p-2 rounded-lg text-sm font-medium transition cursor-pointer disabled:cursor-not-allowed"
         >
           {isSubmitting ? "Processing Order..." : "Confirm Order"}
         </button>
       </form>
 
-      {/* Optional: Render Success Confirmation Card when Order Created */}
+      {/* Success Confirmation Card */}
       {createOrderResponse && (
         <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-xs space-y-1 text-green-800">
           <p className="font-semibold">Order Placed Successfully!</p>
           <p>
             Order ID: #
             {createOrderResponse?.data?.id ||
-              createOrderResponse?.order_result?.order_details?.id}
+              createOrderResponse?.order_result?.order_details?.id ||
+              createOrderResponse?.id}
           </p>
         </div>
       )}

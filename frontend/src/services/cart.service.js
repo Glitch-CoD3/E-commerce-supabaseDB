@@ -1,4 +1,4 @@
-import AxiosInstance from "../api/axiosInstance";
+import AxiosInstance from "../api/axiosInstance.js";
 
 
 
@@ -15,7 +15,7 @@ export const addToCart = async (data) => {
 // 2. Get All Carts
 export const getAllCarts = async () => {
   const response = await AxiosInstance.get("/cart");
-  // console.log("Get All Carts Response:", response.data);
+  console.log("Get All Carts Response:", response.data);
   return response.data;
 };
 
@@ -54,9 +54,8 @@ export const getCartCount = async () => {
   return response.data;
 };
 
-// 8. Get All Carts
-export const FetchCartDetails = async () => {
+// 8. Fetch All Carts
+export const FetchCart = async () => {
   const response = await AxiosInstance.get("/cart/details");
-  // console.log("Get All Carts Response:", response.data);
   return response.data;
 };

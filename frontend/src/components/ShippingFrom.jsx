@@ -13,7 +13,9 @@ import {
 
 import { getme } from "../services/user.service";
 
-// Helper to determine shipping cost: 120 for Dhaka, 70 for everywhere else
+// Only the state field decides the zone — free text (full_address) can
+// contain "dhaka" as a substring for unrelated reasons and must not
+// affect pricing.
 const getShippingCharge = (state = "") => {
   return state.trim().toLowerCase() === "dhaka" ? 120 : 70;
 };
@@ -43,7 +45,7 @@ const ShippingForm = ({ setShippingForm }) => {
     ? savedAddresses.find((addr) => addr.id === selectedAddressId)
     : undefined;
 
-  // Populates form fields and automatically syncs shipping charge
+  // Populates form fields and syncs shipping charge — no navigation here
   const populateFormWithAddress = useCallback(
     (addr, userData = null) => {
       if (!addr || !addr.id) return;
@@ -54,22 +56,22 @@ const ShippingForm = ({ setShippingForm }) => {
       setZipError("");
 
       const shippingCharge = getShippingCharge(addr.state);
+      const phoneNumber = addr.phone_number || userData?.phone_number || "";
 
       reset({
         name: userData?.full_name || "",
         email: userData?.email || "",
-        phone: addr.phone_number || userData?.phone_number || "",
+        phone: phoneNumber,
         address: addr.full_address || "",
         state: addr.state || "",
         city: addr.city || "",
       });
 
-      // Auto-select and send address + static shipping charge to parent
       if (typeof setShippingForm === "function") {
         setShippingForm({
           name: userData?.full_name || "",
           email: userData?.email || "",
-          phone: addr.phone_number || userData?.phone_number || "",
+          phone: phoneNumber,
           address: addr.full_address || "",
           state: addr.state || "",
           city: addr.city || "",
@@ -103,7 +105,6 @@ const ShippingForm = ({ setShippingForm }) => {
           setSavedAddresses(addresses);
 
           if (addresses.length > 0) {
-            // Auto-select default address or first address
             const defaultAddr = addresses.find((a) => a.is_default === true || a.is_default === 1) || addresses[0];
             populateFormWithAddress(defaultAddr, currentUser);
           } else {
@@ -178,7 +179,8 @@ const ShippingForm = ({ setShippingForm }) => {
     }
   };
 
-  // Form submission handler
+  // SAVE ONLY — creates or updates the address, populates/selects it,
+  // but does NOT navigate anywhere. User must press Continue separately.
   const handleShippingForm = async (data) => {
     if (!zipCode.trim()) {
       setZipError("Zip code is required.");
@@ -192,42 +194,51 @@ const ShippingForm = ({ setShippingForm }) => {
         state: data.state || "",
         city: data.city || "",
         zip_code: zipCode.trim(),
+        phone_number: data.phone || "",
       };
 
-      let targetAddressId = selectedAddressId || editingAddressId;
+      let targetAddressId = editingAddressId;
+      let newOrUpdatedAddress = null;
 
-      if (editingAddressId !== null && editingAddressId !== undefined) {
+      if (editingAddressId) {
         await updateShippingAddress(editingAddressId, payload);
-        targetAddressId = editingAddressId;
+        newOrUpdatedAddress = { id: editingAddressId, ...payload };
+
+        setSavedAddresses((prev) =>
+          prev.map((addr) => (addr.id === editingAddressId ? { ...addr, ...payload } : addr))
+        );
       } else {
         const res = await createShippingAddress(payload);
-        targetAddressId = res?.data?.id || res?.address?.id || res?.id;
+        const createdData = res?.data || res?.address || res;
+        targetAddressId = createdData?.id;
+
+        newOrUpdatedAddress = {
+          id: targetAddressId,
+          ...payload,
+        };
+
+        if (targetAddressId) {
+          setSavedAddresses((prev) => [...prev, newOrUpdatedAddress]);
+        }
       }
 
-      if (!targetAddressId && savedAddresses.length > 0) {
-        targetAddressId = savedAddresses[0].id;
+      if (newOrUpdatedAddress && targetAddressId) {
+        // Select and populate the saved address, and update the
+        // addressId in the URL so PaymentForm's fallback fetch stays
+        // correct — but stay on step 2. No router.push to step 3 here.
+        populateFormWithAddress(newOrUpdatedAddress, user);
+        router.push(`/cart?step=2&addressId=${targetAddressId}`, { scroll: false });
       }
-
-      if (!targetAddressId) {
-        console.error("Could not resolve an address ID.");
-        return;
-      }
-
-      // Static assignment based on state
-      const shippingCharge = getShippingCharge(data.state);
-
-      if (typeof setShippingForm === "function") {
-        setShippingForm({
-          ...data,
-          zip_code: zipCode.trim(),
-          shippingCharge,
-        });
-      }
-
-      router.push(`/cart?step=3&addressId=${targetAddressId}`, { scroll: false });
     } catch (err) {
       console.error("Error saving address:", err);
     }
+  };
+
+  // CONTINUE ONLY — navigates to step 3 using the already-selected/saved
+  // address. Does not touch the API.
+  const handleContinue = () => {
+    if (!selectedAddressId) return;
+    router.push(`/cart?step=3&addressId=${selectedAddressId}`, { scroll: false });
   };
 
   return (
@@ -249,9 +260,7 @@ const ShippingForm = ({ setShippingForm }) => {
           <div className="text-xs text-gray-500">
             {currentAddress.city}, {currentAddress.state} - {currentAddress.zip_code || "N/A"}
           </div>
-          <div className="text-xs text-gray-700 font-medium">
-            Shipping Charge: ৳{getShippingCharge(currentAddress.state)}
-          </div>
+          
           {currentAddress.phone_number && (
             <div className="text-xs text-gray-500">Phone: {currentAddress.phone_number}</div>
           )}
@@ -271,11 +280,10 @@ const ShippingForm = ({ setShippingForm }) => {
                 <div
                   key={addr.id}
                   onClick={() => populateFormWithAddress(addr, user)}
-                  className={`p-3 border rounded-lg cursor-pointer flex justify-between items-center transition-all ${
-                    selectedAddressId === addr.id
+                  className={`p-3 border rounded-lg cursor-pointer flex justify-between items-center transition-all ${selectedAddressId === addr.id
                       ? "border-gray-800 bg-gray-50 shadow-sm"
                       : "border-gray-200 hover:border-gray-400"
-                  }`}
+                    }`}
                 >
                   <div className="text-xs space-y-0.5">
                     <p className="font-medium text-gray-800">{addr.full_address}</p>
@@ -426,7 +434,7 @@ const ShippingForm = ({ setShippingForm }) => {
           {zipError && <p className="text-xs text-red-500">{zipError}</p>}
         </div>
 
-        {/* Submit Button */}
+        {/* Save button — saves/creates the address, stays on step 2 */}
         <button
           type="submit"
           disabled={isSubmitting}
@@ -435,11 +443,22 @@ const ShippingForm = ({ setShippingForm }) => {
           {isSubmitting
             ? "Saving..."
             : editingAddressId
-            ? "Update & Continue"
-            : "Save & Continue"}
-          <ArrowRight className="w-3 h-3" />
+              ? "Update Address"
+              : "Save Address"}
         </button>
       </form>
+
+      {/* Continue button — separate action, only enabled once an address
+          is selected/saved. Navigates to step 3 without touching the API. */}
+      <button
+        type="button"
+        onClick={handleContinue}
+        disabled={!selectedAddressId}
+        className="w-full bg-green-600 hover:bg-green-700 transition-all duration-300 text-white p-2 rounded-lg cursor-pointer flex items-center justify-center gap-2 disabled:bg-gray-300 disabled:cursor-not-allowed"
+      >
+        Continue to Payment
+        <ArrowRight className="w-3 h-3" />
+      </button>
     </div>
   );
 };
