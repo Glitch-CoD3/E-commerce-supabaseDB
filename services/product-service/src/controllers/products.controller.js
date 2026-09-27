@@ -5,7 +5,7 @@ import { redis } from "../config/redis.config.js";
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
-const PRODUCTS_CACHE_TTL = 900; // 3 minutes, in seconds
+const PRODUCTS_CACHE_TTL = 10; // 3 minutes, in seconds
 const PRISMA_ERRORS = {
     P2002: [409, "A record with this unique value already exists."],
     P2003: [400, "A related record referenced in the request does not exist."],

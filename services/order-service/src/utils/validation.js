@@ -88,3 +88,51 @@ export const createOrderWithItems = ({ user_id, orderNumber, orderItems, subtota
 
         return order;
     });
+
+
+   export const formatOrderDetails = (order) => ({
+    order: {
+        id: order.id,
+        order_number: order.orderNumber,
+        status: order.status,
+        payment_status: order.paymentStatus,
+        total_amount: order.totalAmount,
+        discount_amount: order.discountAmount,
+        shipping_charge: order.shippingCharge,
+        net_amount: order.netAmount,
+        created_at: order.createdAt
+    },
+
+    customer: order.user
+        ? {
+            id: order.user.id,
+            name: order.user.fullName,
+            email: order.user.email,
+            phone: order.user.phoneNumber
+        }
+        : null,
+
+    items: order.items.map((item) => ({
+        id: item.id,
+        product_name: item.productName,
+        product_id: item.productId,
+        product_slug: item.product?.urlSlug ?? null,
+        variant_id: item.productVariantId,
+        color: item.variant?.colors ?? null,
+        size: item.variant?.sizes ?? null,
+        price: item.price,
+        quantity: item.quantity,
+        total_amount: item.totalAmount,
+        image_url: item.variant?.images?.[0]?.imageUrl ?? null
+    })),
+
+    // Flat map: variant id → array of image URLs, if your frontend wants this shape too
+    // productsVariants: order.items.reduce((acc, item) => {
+    //     if (item.variant) {
+    //         acc[item.variant.id] = item.variant.images.map((img) => img.imageUrl);
+    //     }
+    //     return acc;
+    // }, {}),
+
+    shippingAddress: order.shippingAddresses?.[0] ?? null
+});

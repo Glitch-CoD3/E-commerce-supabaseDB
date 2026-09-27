@@ -46,7 +46,7 @@ const getProductName = (product) => product.product_name ?? product.name;
 const getProductStock = (product) => product.stock_quantity ?? product.quantity;
 
 // Prisma camelCase -> snake_case response shapes
-import { formatOrder, createOrderWithItems, formatShippingAddress, formatOrderItem } from "../utils/validation.js"
+import { formatOrder, createOrderWithItems, formatShippingAddress, formatOrderItem, formatOrderDetails } from "../utils/validation.js"
 
 /* -------------------------------------------------------------------------- */
 /*                               Customer orders                              */
@@ -638,6 +638,81 @@ const updateOrderStatus = async (req, res) => {
     }
 };
 
+
+/**
+ * @method GET /api/v1/order/details/:id
+ * @description Retrieve full order details (customer, items, variants, images, shipping address), use share Database
+ * @access Admin
+ */
+const getOrderDetails = async (req, res) => {
+    try {
+        const orderId = parseId(req.params.orderId);
+
+        if (!orderId) {
+            return res.status(400).json({
+                success: false,
+                message: "A valid order id is required."
+            });
+        }
+
+        const order = await prisma.order.findUnique({
+            where: { id: orderId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        fullName: true,
+                        email: true,
+                        phoneNumber: true
+                    }
+                },
+                items: {
+                    include: {
+                        product: {
+                            select: {
+                                id: true,
+                                productName: true,
+                                urlSlug: true
+                            }
+                        },
+                        variant: {
+                            select: {
+                                id: true,
+                                colors: true,
+                                sizes: true,
+                                price: true,
+                                stockQuantity: true,
+                                images: {
+                                    where: { deletedAt: null },
+                                    select: { imageUrl: true, sortOrder: true },
+                                    orderBy: { sortOrder: "asc" }
+                                }
+                            }
+                        }
+                    }
+                },
+                shippingAddresses: true // ⚠️ OrderShippingAddress model — paste it if the shape below is wrong
+            }
+        });
+
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: "Order not found."
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            message: "Order details fetched successfully.",
+            order_details: serialize(formatOrderDetails(order))
+        });
+    } catch (error) {
+        return handleError(res, error, "Get Order Details Error", "Failed to retrieve order details.");
+    }
+};
+
 /**
  * @method GET /api/v1/orders/admin
  * @description Get all orders (with pagination, status filter and search by order id / number)
@@ -1184,5 +1259,6 @@ export {
     getSalesTrendOverTime,
     getInventoryAlerts,
     getCustomerAnalytics,
-    getAllPaidCustomers
+    getAllPaidCustomers,
+    getOrderDetails
 };

@@ -73,6 +73,11 @@ export const getOrderByOrderIdAdmin = async (id) => {
   const response = await AxiosInstance.get(`/order/admin/${id}`);
   return response.data;
 };
+// 10. Get Order By Order ID (Admin)
+export const getOrderDetailsByOrderId = async (id) => {
+  const response = await AxiosInstance.get(`/order/all-details/${id}`);
+  return response.data;
+};
 
 // 11. Update Payment Status (Admin)
 export const updatePaymentStatus = async (id, paymentStatus) => {

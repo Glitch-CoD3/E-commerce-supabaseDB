@@ -30,7 +30,6 @@ const STATUS_CONFIG = {
   cancelled: { label: "Cancelled", badgeClass: "bg-rose-50 text-rose-700 ring-rose-600/10 print:bg-rose-100 print:text-rose-800", Icon: XCircle },
   returned: { label: "Returned", badgeClass: "bg-purple-50 text-purple-700 ring-purple-600/10 print:bg-purple-100 print:text-purple-800", Icon: RotateCcw },
 
-  // Payment Status Enums
   PAID: { label: "Paid", badgeClass: "bg-emerald-50 text-emerald-700 ring-emerald-600/20 print:bg-emerald-100 print:text-emerald-800", Icon: CheckCircle2 },
   UNPAID: { label: "Unpaid", badgeClass: "bg-rose-50 text-rose-700 ring-rose-600/10 print:bg-rose-100 print:text-rose-800", Icon: XCircle },
 
@@ -98,17 +97,16 @@ function CopyableOrderNumber({ value }) {
 }
 
 export default function OrderDetails(props) {
-  const order = props?.order?.[0] || props?.order || {};
+  const order = props?.order || {};
   const items = props?.items || [];
   const shippingAddress = props?.shippingAddress || {};
   const customer = props?.customer || {};
-  const productsVarient = props?.productsVarients || {};
 
   const id = order?.id;
   const initialPaymentStatus = order?.payment_status || "UNPAID";
   const orderNumber = order?.order_number || (order?.id ? `ORD-#${order.id}` : "N/A");
   const createdAt = order?.created_at || new Date().toISOString();
-  const initialStatus = order?.status || order?.order_status || "pending";
+  const initialStatus = order?.status || "pending";
 
   const subtotal = Number(order?.total_amount || 0);
   const discount = Number(order?.discount_amount || 0);
@@ -152,17 +150,6 @@ export default function OrderDetails(props) {
     }
   };
 
-  const getItemImage = (item) => item?.image_url;
-
-  const getVariantData = (item) => {
-    const variantId = item?.product_variant_id;
-    const variantObj = productsVarient?.[variantId]?.product_varient;
-    return {
-      color: variantObj?.colors || null,
-      size: variantObj?.sizes || null
-    };
-  };
-
   const handlePrint = () => {
     window.print();
   };
@@ -181,7 +168,6 @@ export default function OrderDetails(props) {
                   INVOICE
                 </h1>
 
-                {/* Print Button (Hidden in Print View) */}
                 <button
                   type="button"
                   onClick={handlePrint}
@@ -192,7 +178,6 @@ export default function OrderDetails(props) {
                 </button>
               </div>
 
-              {/* Labeled Badges */}
               <div className="flex flex-wrap items-center gap-4 mb-3">
                 <div className="flex items-center gap-2 text-xs text-slate-300 print:text-slate-700">
                   <span className="font-semibold text-slate-400 print:text-slate-600 uppercase tracking-wider text-[10px]">Order Status:</span>
@@ -218,9 +203,7 @@ export default function OrderDetails(props) {
               </div>
             </div>
 
-            {/* Action Dropdowns (Hidden in Print View) */}
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 self-start sm:self-auto bg-slate-800 border border-slate-600 p-2.5 rounded-xl shadow-md print:hidden">
-              {/* Payment Status Dropdown */}
               <div className="flex flex-col gap-1">
                 <label htmlFor="paymentStatusSelect" className="text-[10px] font-extrabold tracking-wider text-sky-300 uppercase flex items-center gap-1">
                   Payment Status
@@ -241,7 +224,6 @@ export default function OrderDetails(props) {
                 </select>
               </div>
 
-              {/* Order Status Dropdown */}
               <div className="flex flex-col gap-1">
                 <label htmlFor="orderStatusSelect" className="text-[10px] font-extrabold tracking-wider text-sky-300 uppercase flex items-center gap-1">
                   Order Status
@@ -287,11 +269,11 @@ export default function OrderDetails(props) {
               <tbody className="divide-y divide-slate-600/60 print:divide-slate-200">
                 {items.map((item, idx) => {
                   const name = item?.product_name || "Unnamed Product";
-                  const image = getItemImage(item);
+                  const image = item?.image_url;
                   const price = Number(item?.price || 0);
                   const qty = Number(item?.quantity || 1);
                   const itemTotal = Number(item?.total_amount || 0);
-                  const { color, size } = getVariantData(item);
+                  const { color, size } = item;
 
                   return (
                     <tr key={item?.id || idx} className="group hover:bg-slate-600/40 transition-colors print:hover:bg-transparent">
@@ -341,15 +323,15 @@ export default function OrderDetails(props) {
             </table>
           </div>
 
-          {/* Mobile View (Hidden in Print View so Table is used instead) */}
+          {/* Mobile View */}
           <div className="divide-y divide-slate-600/60 sm:hidden print:hidden">
             {items.map((item, idx) => {
               const name = item?.product_name || "Unnamed Product";
-              const image = getItemImage(item);
+              const image = item?.image_url;
               const price = Number(item?.price || 0);
               const qty = Number(item?.quantity || 1);
               const itemTotal = Number(item?.total_amount || 0);
-              const { color, size } = getVariantData(item);
+              const { color, size } = item;
 
               return (
                 <div key={item?.id || idx} className="flex gap-4 py-4 first:pt-0 last:pb-0">
@@ -399,12 +381,18 @@ export default function OrderDetails(props) {
               </h3>
               <div className="rounded-xl border border-slate-600 bg-slate-800 p-4 text-sm text-slate-200 shadow-sm print:border-slate-300 print:bg-white print:text-slate-800">
                 <p className="font-semibold text-white print:text-slate-900">
-                  {shippingAddress?.full_address || "No address provided"}
+                  {shippingAddress?.fullAddress || "No address provided"}
                 </p>
                 <p className="text-slate-300 mt-0.5 print:text-slate-600">
                   {[shippingAddress?.city, shippingAddress?.state].filter(Boolean).join(", ")}
-                  {shippingAddress?.zip_code ? ` - ${shippingAddress.zip_code}` : ""}
+                  {shippingAddress?.zipCode ? ` - ${shippingAddress.zipCode}` : ""}
                 </p>
+                {shippingAddress?.phoneNumber && (
+                  <p className="flex items-center gap-2 text-slate-300 mt-1.5 print:text-slate-600">
+                    <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 print:text-slate-500" />
+                    <span>{shippingAddress.phoneNumber}</span>
+                  </p>
+                )}
               </div>
             </div>
 
@@ -415,12 +403,12 @@ export default function OrderDetails(props) {
               </h3>
               <div className="rounded-xl border border-slate-600 bg-slate-800 p-4 text-sm text-slate-200 shadow-sm space-y-2 print:border-slate-300 print:bg-white print:text-slate-800">
                 <p className="font-semibold text-white print:text-slate-900">
-                  {customer?.full_name || "Guest Customer"}
+                  {customer?.name || "Guest Customer"}
                 </p>
-                {customer?.phone_number && (
+                {customer?.phone && (
                   <p className="flex items-center gap-2 text-slate-300 print:text-slate-700">
                     <Phone className="h-3.5 w-3.5 shrink-0 text-slate-400 print:text-slate-500" />
-                    <span>{customer.phone_number}</span>
+                    <span>{customer.phone}</span>
                   </p>
                 )}
                 {customer?.email && (
@@ -434,7 +422,7 @@ export default function OrderDetails(props) {
 
           </div>
 
-          {/* Summary Section - Highlighted Card */}
+          {/* Summary Section */}
           <div className="flex flex-col justify-between">
             <div>
               <h3 className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-sky-300 mb-2 print:text-slate-700">

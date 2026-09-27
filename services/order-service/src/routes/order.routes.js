@@ -26,7 +26,8 @@ import {
     getTopSellingProducts,
     getSalesTrendOverTime,
     getInventoryAlerts,
-    getCustomerAnalytics
+    getCustomerAnalytics,
+    getOrderDetails
 } from "../controllers/order.controller.js";
 
 const router = express.Router();
@@ -86,6 +87,9 @@ router.get(
     allowRoles(ROLES.ADMIN),
     getAllOrders
 );
+
+
+
 
 /**
  * NOTE [FIX 1]: Added alias route for dashboard statistics.
@@ -215,5 +219,10 @@ router.patch(
 router.get("/details/", getOrderByOrderId);
 router.get("/details/:orderId", getOrderByOrderId);
 
+router.get(
+    "/all-details/:orderId/",
+    allowRoles(ROLES.ADMIN),
+    getOrderDetails
+);
 
 export default router;

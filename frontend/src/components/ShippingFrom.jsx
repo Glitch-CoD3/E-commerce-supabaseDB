@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { ArrowRight, PlusCircle, Edit2, MapPin, CheckCircle, Trash2 } from "lucide-react";
+import { ArrowRight, PlusCircle, Edit2, MapPin, CheckCircle, Trash2, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import {
@@ -26,6 +26,7 @@ const ShippingForm = ({ setShippingForm }) => {
   const [selectedAddressId, setSelectedAddressId] = useState(null);
   const [editingAddressId, setEditingAddressId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [addressLoading, setAddressLoading] = useState(true); // Dedicated loading state for previous addresses
   const [deletingId, setDeletingId] = useState(null);
 
   const [zipCode, setZipCode] = useState("");
@@ -90,6 +91,7 @@ const ShippingForm = ({ setShippingForm }) => {
     const fetchInitialData = async () => {
       try {
         setLoading(true);
+        setAddressLoading(true); // Start loading previous addresses
         const userRes = await getme();
         const currentUser = userRes?.user || null;
 
@@ -125,6 +127,7 @@ const ShippingForm = ({ setShippingForm }) => {
       } finally {
         if (isMounted) {
           setLoading(false);
+          setAddressLoading(false); // Stop loading previous addresses
         }
       }
     };
@@ -223,9 +226,6 @@ const ShippingForm = ({ setShippingForm }) => {
       }
 
       if (newOrUpdatedAddress && targetAddressId) {
-        // Select and populate the saved address, and update the
-        // addressId in the URL so PaymentForm's fallback fetch stays
-        // correct — but stay on step 2. No router.push to step 3 here.
         populateFormWithAddress(newOrUpdatedAddress, user);
         router.push(`/cart?step=2&addressId=${targetAddressId}`, { scroll: false });
       }
@@ -234,8 +234,7 @@ const ShippingForm = ({ setShippingForm }) => {
     }
   };
 
-  // CONTINUE ONLY — navigates to step 3 using the already-selected/saved
-  // address. Does not touch the API.
+  // CONTINUE ONLY — navigates to step 3 using the already-selected/saved address.
   const handleContinue = () => {
     if (!selectedAddressId) return;
     router.push(`/cart?step=3&addressId=${selectedAddressId}`, { scroll: false });
@@ -267,63 +266,74 @@ const ShippingForm = ({ setShippingForm }) => {
         </div>
       )}
 
-      {/* Saved Addresses List */}
-      {!loading && Array.isArray(savedAddresses) && savedAddresses.length > 0 && (
-        <div className="flex flex-col gap-3">
-          <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-            Saved Addresses
-          </label>
-          <div className="grid grid-cols-1 gap-2">
-            {savedAddresses.map((addr) => {
-              const charge = getShippingCharge(addr.state);
-              return (
-                <div
-                  key={addr.id}
-                  onClick={() => populateFormWithAddress(addr, user)}
-                  className={`p-3 border rounded-lg cursor-pointer flex justify-between items-center transition-all ${selectedAddressId === addr.id
-                      ? "border-gray-800 bg-gray-50 shadow-sm"
-                      : "border-gray-200 hover:border-gray-400"
-                    }`}
-                >
-                  <div className="text-xs space-y-0.5">
-                    <p className="font-medium text-gray-800">{addr.full_address}</p>
-                    <p className="text-gray-500">
-                      {addr.city}, {addr.state} - {addr.zip_code || "N/A"}
-                    </p>
-                    <p className="text-xs font-medium text-gray-600">
-                      Delivery: ৳{charge}
-                    </p>
-                    {addr.phone_number && <p className="text-gray-500">{addr.phone_number}</p>}
-                  </div>
+      {/* Saved Addresses List with dedicated loading state */}
+      <div className="flex flex-col gap-3">
+        <label className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
+          Saved Addresses
+        </label>
 
-                  <div className="flex items-center gap-3">
-                    <Edit2 className="w-4 h-4 text-gray-400 hover:text-gray-700 transition-colors" />
-                    <button
-                      type="button"
-                      disabled={deletingId === addr.id}
-                      onClick={(e) => handleDeleteAddress(e, addr.id)}
-                      className="p-1 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
-                      title="Delete Address"
-                    >
-                      <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600 transition-colors" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        {addressLoading ? (
+          <div className="flex items-center justify-center py-6 border border-gray-200 rounded-lg bg-gray-50">
+            <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+            <span className="ml-2 text-xs text-gray-500">Loading saved addresses...</span>
           </div>
+        ) : Array.isArray(savedAddresses) && savedAddresses.length > 0 ? (
+          <>
+            <div className="grid grid-cols-1 gap-2">
+              {savedAddresses.map((addr) => {
+                const charge = getShippingCharge(addr.state);
+                return (
+                  <div
+                    key={addr.id}
+                    onClick={() => populateFormWithAddress(addr, user)}
+                    className={`p-3 border rounded-lg cursor-pointer flex justify-between items-center transition-all ${
+                      selectedAddressId === addr.id
+                        ? "border-gray-800 bg-gray-50 shadow-sm"
+                        : "border-gray-200 hover:border-gray-400"
+                    }`}
+                  >
+                    <div className="text-xs space-y-0.5">
+                      <p className="font-medium text-gray-800">{addr.full_address}</p>
+                      <p className="text-gray-500">
+                        {addr.city}, {addr.state} - {addr.zip_code || "N/A"}
+                      </p>
+                      <p className="text-xs font-medium text-gray-600">
+                        Delivery: ৳{charge}
+                      </p>
+                      {addr.phone_number && <p className="text-gray-500">{addr.phone_number}</p>}
+                    </div>
 
-          <button
-            type="button"
-            onClick={handleAddNew}
-            className="flex items-center gap-1.5 text-xs text-gray-700 font-medium hover:underline mt-1 w-fit"
-          >
-            <PlusCircle className="w-4 h-4" /> Add New Address
-          </button>
-        </div>
-      )}
+                    <div className="flex items-center gap-3">
+                      <Edit2 className="w-4 h-4 text-gray-400 hover:text-gray-700 transition-colors" />
+                      <button
+                        type="button"
+                        disabled={deletingId === addr.id}
+                        onClick={(e) => handleDeleteAddress(e, addr.id)}
+                        className="p-1 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                        title="Delete Address"
+                      >
+                        <Trash2 className="w-4 h-4 text-red-400 hover:text-red-600 transition-colors" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
 
-      {/* Shipping Address Inputs */}
+            <button
+              type="button"
+              onClick={handleAddNew}
+              className="flex items-center gap-1.5 text-xs text-gray-700 font-medium hover:underline mt-1 w-fit"
+            >
+              <PlusCircle className="w-4 h-4" /> Add New Address
+            </button>
+          </>
+        ) : (
+          <p className="text-xs text-gray-500 italic">No saved addresses found. Please add one below.</p>
+        )}
+      </div>
+
+      {/* Shipping Address Inputs Form */}
       <form className="flex flex-col gap-4" onSubmit={handleSubmit(handleShippingForm)}>
         {/* Name */}
         <div className="flex flex-col gap-1">
@@ -434,7 +444,7 @@ const ShippingForm = ({ setShippingForm }) => {
           {zipError && <p className="text-xs text-red-500">{zipError}</p>}
         </div>
 
-        {/* Save button — saves/creates the address, stays on step 2 */}
+        {/* Save button */}
         <button
           type="submit"
           disabled={isSubmitting}
@@ -448,8 +458,7 @@ const ShippingForm = ({ setShippingForm }) => {
         </button>
       </form>
 
-      {/* Continue button — separate action, only enabled once an address
-          is selected/saved. Navigates to step 3 without touching the API. */}
+      {/* Continue button */}
       <button
         type="button"
         onClick={handleContinue}
