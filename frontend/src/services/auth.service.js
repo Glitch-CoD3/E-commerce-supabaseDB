@@ -23,4 +23,7 @@ export const resendOtp = async (data) => {
   return response.data;
 };
 
-
+export const logoutUser = async () => {
+    const res = await AxiosInstance.post("/auth/logout");
+    return res.data;
+};

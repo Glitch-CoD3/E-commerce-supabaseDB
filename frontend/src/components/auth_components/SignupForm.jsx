@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -12,9 +12,21 @@ import {
   ArrowRight,
   Phone
 } from "lucide-react";
+import { useAuth, ADMIN_ROLE_ID } from "../../services/authContext.js";
+import { signupUser } from "../../services/auth.service.js"
 
 export default function SignupForm() {
   const router = useRouter();
+  const { user, loading: authLoading, isAdmin, isCustomer } = useAuth();
+
+// Already logged in -> no reason to see the signup page
+useEffect(() => {
+  if (authLoading) return;
+  if (user) {
+    router.replace(isAdmin ? "/dashboard" : "/");
+  }
+}, [authLoading, user, isAdmin, router]);
+
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -69,6 +81,15 @@ export default function SignupForm() {
       setIsLoading(false);
     }
   };
+
+
+  if (authLoading || user) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-white">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+    </div>
+  );
+}
 
   return (
     <div className="min-h-screen bg-white flex flex-col justify-center py-12 sm:px-6 lg:px-8">

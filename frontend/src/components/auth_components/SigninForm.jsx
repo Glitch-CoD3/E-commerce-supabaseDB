@@ -1,8 +1,10 @@
 'use client'
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation.js';
 import { signin_User } from '../../services/auth.service.js';
+import { getme } from '../../services/user.service.js';
+import { useAuth, ADMIN_ROLE_ID } from '@/services/authContext.js';
 import Link from 'next/link.js';
 import { Eye, EyeOff, Lock, Mail, ArrowRight } from 'lucide-react';
 
@@ -14,6 +16,16 @@ export default function SigninForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+
+  const { user, setUser, loading: authLoading, isAdmin } = useAuth();
+
+  // Already logged in -> never show the login page
+  useEffect(() => {
+    if (authLoading) return;
+    if (user) {
+      router.replace(isAdmin ? '/dashboard' : '/');
+    }
+  }, [authLoading, user, isAdmin, router]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,24 +39,30 @@ export default function SigninForm() {
 
     setIsLoading(true);
 
-    // API call
     try {
-      const response = await signin_User(
+      await signin_User({ email, password });
 
-        {
-          email,
-          password
-        }
-      );
+      // Load the full user (includes role_id) and share it with the whole app
+      const data = await getme();
+      setUser(data.user);
 
-      // Redirect to home page after successful login
-      router.push("/");
+      const goesToDashboard = Number(data.user?.role_id) === ADMIN_ROLE_ID;
+      router.replace(goesToDashboard ? '/dashboard' : '/');
     } catch (err) {
       setError('Invalid email or password.');
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Checking the session, or redirecting an already logged-in user
+  if (authLoading || user) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -160,7 +178,7 @@ export default function SigninForm() {
               )}
             </button>
 
-            <p className="mt-2 text-sm text-slate-600  flex items-center justify-center">
+            <p className="mt-2 text-sm text-slate-600 flex items-center justify-center">
               Don't have an account?{' '}
               <Link href="/signup" className="font-semibold text-blue-600 hover:text-blue-500 transition-colors">
                 Sign up for free
