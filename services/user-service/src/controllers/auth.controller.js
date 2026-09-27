@@ -563,7 +563,8 @@ const get_me = async (req, res) => {
                 id: true,
                 fullName: true,
                 email: true,
-                phoneNumber: true
+                phoneNumber: true,
+                roleId:true
             }
         });
 
@@ -577,10 +578,11 @@ const get_me = async (req, res) => {
         return res.status(200).json({
             success: true,
             user: {
-                id: user.id.toString(),
+                id: user.id.toString() ?? null,
                 full_name: user.fullName,
                 email: user.email,
-                phone_number: user.phoneNumber
+                phone_number: user.phoneNumber,
+                role_id:user.roleId?.toString() ?? null
             }
         });
 
