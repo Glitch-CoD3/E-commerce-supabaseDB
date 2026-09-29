@@ -19,7 +19,6 @@ const router = express.Router();
 // Middlewares (Admin Only)
 // =======================
 router.use(verifyJWT);
-router.use(allowRoles(ROLES.ADMIN));
 
 // =======================
 // Base & Static Routes (MUST come before dynamic /:id routes)
@@ -30,7 +29,7 @@ router.use(allowRoles(ROLES.ADMIN));
  * @description Create a new product variant
  * @access Private (Admin)
  */
-router.post("/", createProductVariant);
+router.post("/",allowRoles(ROLES.ADMIN), createProductVariant);
 
 /**
  * @method GET /api/v1/product-variants
@@ -69,13 +68,13 @@ router.get("/:id", getProductVariantById);
  * @description Update a product variant
  * @access Private (Admin)
  */
-router.patch("/:id", updateProductVariant);
+router.patch("/:id",allowRoles(ROLES.ADMIN), updateProductVariant);
 
 /**
  * @method DELETE /api/v1/product-variants/:id
  * @description Delete a product variant
  * @access Private (Admin)
  */
-router.delete("/:id", deleteProductVariant);
+router.delete("/:id",allowRoles(ROLES.ADMIN), deleteProductVariant);
 
 export default router;

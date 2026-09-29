@@ -38,7 +38,7 @@ const authorizeRole = (...allowedRoles) => {
             });
         }
 
-        if (!allowedRoles.includes(req.user.user.role)) {
+        if (!allowedRoles.includes(req.user.user.role_id)) {
             return res.status(403).json({
                 success: false,
                 message: "Forbidden"

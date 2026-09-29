@@ -166,6 +166,7 @@ const createOrder = async (req, res) => {
         const shippingFee = isDhaka ? INSIDE_DHAKA_FEE : OUTSIDE_DHAKA_FEE;
 
         const total = subtotal + shippingFee;
+        console.log("total", total)
 
         // 5. Save order, items and shipping snapshot
         const order = await createOrderWithItems({

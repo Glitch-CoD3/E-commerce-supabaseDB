@@ -1,0 +1,46 @@
+"use client";
+
+import { useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "./authContext.js";
+
+export default function RouteGuard({ children }) {
+    const router = useRouter();
+    const pathname = usePathname();
+
+    const {
+        user,
+        loading,
+        isAdmin,
+    } = useAuth();
+
+    useEffect(() => {
+        if (loading) return;
+
+        // Not logged in
+        if (!user) {
+            router.replace("/sign-in");
+            return;
+        }
+
+        // Dashboard → Admin only
+        if (pathname.startsWith("/dashboard") && !isAdmin) {
+            router.replace("/unauthorized");
+        }
+    }, [loading, user, isAdmin, pathname, router]);
+
+    if (loading) {
+        return null;
+    }
+
+    if (!user) {
+        return null;
+    }
+
+    // Prevent non-admin from seeing dashboard
+    if (pathname.startsWith("/dashboard") && !isAdmin) {
+        return null;
+    }
+
+    return children;
+}
