@@ -5,6 +5,7 @@ import Image from "next/image.js";
 import Link from "next/link.js";
 import { useMemo, useState } from "react";
 import { addToCart } from "../services/cart.service.js";
+import { useCart } from "@/services/cartContext.js";
 
 const ProductCard = ({ product }) => {
   // Ensure sizes and colors are valid non-null string arrays
@@ -24,6 +25,7 @@ const ProductCard = ({ product }) => {
   });
 
   const [isAdding, setIsAdding] = useState(false);
+  const { refreshCartCount } = useCart();
 
   // Safe parsing helper
   const parseJsonArray = (data) => {
@@ -99,6 +101,7 @@ const ProductCard = ({ product }) => {
       };
 
       await addToCart(cartInput);
+      await refreshCartCount();
     } catch (error) {
       console.error("Failed to add product to cart:", error);
     } finally {

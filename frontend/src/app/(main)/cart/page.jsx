@@ -2,6 +2,7 @@
 
 import PaymentForm from "../../../components/PaymentForm.jsx";
 import ShippingForm from "../../../components/ShippingFrom.jsx";
+import { useCart } from "@/services/cartContext.js";
 import {
   Loader2,
   Trash2,
@@ -44,6 +45,7 @@ const CartPage = () => {
   const [loading, setLoading] = useState(true);
   const [updatingItemId, setUpdatingItemId] = useState(null);
   const [isClearing, setIsClearing] = useState(false);
+  const { refreshCartCount } = useCart();
 
   const [defaultAddress, setDefaultAddress] = useState(null);
   const [addressLoading, setAddressLoading] = useState(true);
@@ -159,6 +161,7 @@ const CartPage = () => {
       await removeCartItem(id);
       await fetchCart();
       toast.success("Item removed from cart");
+      await refreshCartCount();
     } catch (error) {
       handleApiError(error, { onRateLimit: (sec) => setCooldown(sec) });
     } finally {
@@ -174,6 +177,7 @@ const CartPage = () => {
       await clearCart();
       await fetchCart();
       toast.success("Cart cleared");
+      await refreshCartCount();
     } catch (error) {
       handleApiError(error, { onRateLimit: (sec) => setCooldown(sec) });
     } finally {
@@ -225,22 +229,19 @@ const CartPage = () => {
         <div className="flex items-center justify-center gap-6 sm:gap-10 lg:gap-16 min-w-max mx-auto px-2">
           {steps.map((step) => (
             <div
-              className={`flex items-center gap-2 pb-3 sm:pb-4 border-b-2 shrink-0 ${
-                step.id === activeStep ? "border-gray-800" : "border-gray-200"
-              }`}
+              className={`flex items-center gap-2 pb-3 sm:pb-4 border-b-2 shrink-0 ${step.id === activeStep ? "border-gray-800" : "border-gray-200"
+                }`}
               key={step.id}
             >
               <div
-                className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full text-white text-xs sm:text-sm flex items-center justify-center shrink-0 ${
-                  step.id === activeStep ? "bg-gray-800" : "bg-gray-400"
-                }`}
+                className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full text-white text-xs sm:text-sm flex items-center justify-center shrink-0 ${step.id === activeStep ? "bg-gray-800" : "bg-gray-400"
+                  }`}
               >
                 {step.id}
               </div>
               <p
-                className={`text-xs sm:text-sm whitespace-nowrap ${
-                  step.id === activeStep ? "text-gray-800" : "text-gray-400"
-                }`}
+                className={`text-xs sm:text-sm whitespace-nowrap ${step.id === activeStep ? "text-gray-800" : "text-gray-400"
+                  }`}
               >
                 {step.title}
               </p>
@@ -443,26 +444,23 @@ const CartPage = () => {
                   ].map((zone) => (
                     <div
                       key={zone.label}
-                      className={`relative rounded-xl border px-2 sm:px-3 py-2.5 text-center transition-all ${
-                        zone.active
+                      className={`relative rounded-xl border px-2 sm:px-3 py-2.5 text-center transition-all ${zone.active
                           ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600"
                           : "border-gray-200 bg-gray-50/60"
-                      }`}
+                        }`}
                     >
                       {zone.active && (
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 absolute top-1.5 right-1.5" />
                       )}
                       <p
-                        className={`text-[11px] sm:text-xs font-semibold ${
-                          zone.active ? "text-emerald-700" : "text-gray-400"
-                        }`}
+                        className={`text-[11px] sm:text-xs font-semibold ${zone.active ? "text-emerald-700" : "text-gray-400"
+                          }`}
                       >
                         {zone.label}
                       </p>
                       <p
-                        className={`text-sm font-bold mt-0.5 ${
-                          zone.active ? "text-emerald-700" : "text-gray-300"
-                        }`}
+                        className={`text-sm font-bold mt-0.5 ${zone.active ? "text-emerald-700" : "text-gray-300"
+                          }`}
                       >
                         TK {zone.fee}
                       </p>
