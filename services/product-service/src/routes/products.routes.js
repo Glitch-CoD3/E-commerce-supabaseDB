@@ -9,12 +9,14 @@ import {
     updateProductStatus,
     deleteProduct,
     getProductsByCategoryId,
-    getAllDeletedProducts
+    getAllDeletedProducts,
+    getProductFilters
 } from "../controllers/products.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { ROLES } from "../constants.js";
 import { allowRoles } from "../middlewares/authorize.middleware.js";
+import { validateFilterQueryParams } from "../utils/validateFilterQueryParams.js";
 
 
 const router = express.Router();
@@ -34,6 +36,16 @@ const router = express.Router();
  * @access Public
  */
 router.get("/", getAllProducts);
+
+
+/**
+ * @method GET /api/v1/products/filters
+ * @description Get product filters (e.g., categories, brands, price ranges)
+ * @access Public
+ */
+router.get("/filters", validateFilterQueryParams, getProductFilters);
+
+
 
 /**
  * @method GET /api/v1/products/category/:categoryId
