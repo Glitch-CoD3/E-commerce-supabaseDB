@@ -118,7 +118,7 @@ const ProductCard = ({ product,  index = 0 }) => {
   return (
     <div className="shadow-lg rounded-lg overflow-hidden flex flex-col bg-white">
       <Link
-        href={`/product/${product.id}`}
+        href={`/products/details/${product.id}`}
         className="relative h-72 w-full overflow-hidden block bg-gray-100"
       >
         <Image
