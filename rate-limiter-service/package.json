@@ -1,0 +1,20 @@
+{
+  "name": "rate-limiter-service",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev":"nodemon -r dotenv/config --experimental-json-modules ./src/server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@upstash/redis": "^1.39.0",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.14"
+  }
+}

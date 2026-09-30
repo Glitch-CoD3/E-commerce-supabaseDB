@@ -5,7 +5,7 @@ import morgan from 'morgan';
 import cors from 'cors';
 
 // Middlewares
-import limiter from './middleware/rateLimit.middleware.js';
+import rateLimit from './middleware/rateLimit.middleware.js';
 import { verifyJWT, authorizeRole } from './middleware/auth.middleware.js';
 
 // Routes (Proxy)
@@ -29,12 +29,12 @@ app.use(helmet());
 
 app.use(cors({
     origin: "http://localhost:3000",
-    credentials: true
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-device-id", "x-api-key"],
+    exposedHeaders: ["Retry-After", "X-RateLimit-Remaining"],
 }));
 
-/* ---------------- Rate Limit ---------------- */
 
-app.use('/api', limiter);
 
 /* ---------------- Logger ---------------- */
 
@@ -61,25 +61,25 @@ app.get('/health', (req, res) => {
 
 
 
-app.use("/api/v1/auth", userProxy);
+app.use("/api/v1/auth", rateLimit('auth'), userProxy);
 
 /* ---------------- Protected Routes ---------------- */
 
-app.use("/api/v1/products", verifyJWT, productProxy);
+app.use("/api/v1/products",               verifyJWT,   rateLimit('product'),        productProxy);
 
-app.use("/api/v1/brands", verifyJWT, brands);
+app.use("/api/v1/brands",                 verifyJWT,   rateLimit('brand'),          brands);
 
-app.use("/api/v1/categories", verifyJWT, categoryProxy);
+app.use("/api/v1/categories",             verifyJWT,   rateLimit('category'),       categoryProxy);
 
-app.use("/api/v1/product-variants", verifyJWT, productVariantProxy);
+app.use("/api/v1/product-variants",       verifyJWT,   rateLimit('productVariant'), productVariantProxy);
 
-app.use("/api/v1/product-variants-image", verifyJWT, productvariantImage);
+app.use("/api/v1/product-variants-image", verifyJWT,   rateLimit('variantImage'),   productvariantImage);
 
-app.use('/api/v1/cart', verifyJWT, cartProxy);
+app.use('/api/v1/cart',                   verifyJWT,   rateLimit('cart'),           cartProxy);
 
-app.use('/api/v1/order', verifyJWT, orderProxy);
+app.use('/api/v1/order',                  verifyJWT,   rateLimit('order'),           orderProxy);
 
-app.use('/api/v1/order/address', verifyJWT, shipping_address_proxy);
+app.use('/api/v1/order/address',          verifyJWT,    rateLimit('shippingAddress'), shipping_address_proxy);
 
 
 /* ---------------- 404 ---------------- */

@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "concurrently \"npm run dev --prefix api-gateway\" \"npm run dev --prefix services/user-service\" \"npm run dev --prefix services/product-service\" \"npm run dev --prefix services/cart-service\" \"npm run dev --prefix services/order-service\"",
+    "start": "concurrently \"npm run dev --prefix api-gateway\" \"npm run dev --prefix services/user-service\" \"npm run dev --prefix services/product-service\" \"npm run dev --prefix services/cart-service\" \"npm run dev --prefix services/order-service\" \"npm run dev --prefix rate-limiter-service\"",
     "test": "echo \"Error: no test specified\" && exit 1",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",
