@@ -301,6 +301,7 @@ const CartPage = () => {
                               src={item.imageUrl}
                               alt={product?.productName || "Product image"}
                               fill
+                              sizes="80px"
                               className="object-contain"
                             />
                           ) : (
@@ -445,8 +446,8 @@ const CartPage = () => {
                     <div
                       key={zone.label}
                       className={`relative rounded-xl border px-2 sm:px-3 py-2.5 text-center transition-all ${zone.active
-                          ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600"
-                          : "border-gray-200 bg-gray-50/60"
+                        ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600"
+                        : "border-gray-200 bg-gray-50/60"
                         }`}
                     >
                       {zone.active && (

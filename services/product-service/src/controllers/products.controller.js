@@ -299,6 +299,8 @@ const getAllProducts = async (req, res) => {
 
         const {
             categoryId,
+            categorySlug,
+            categoryName,
             brandId,
 
             // Price filters
@@ -309,7 +311,6 @@ const getAllProducts = async (req, res) => {
             inStock,
             slug,
             productName,
-            categoryName,
 
             // Sorting
             sortBy,
@@ -324,13 +325,14 @@ const getAllProducts = async (req, res) => {
             limit,
             search,
             categoryId,
+            categorySlug,
+            categoryName,
             brandId,
             minPrice,
             maxPrice,
             inStock,
             slug,
             productName,
-            categoryName,
             sortBy,
         };
 
@@ -366,192 +368,131 @@ const getAllProducts = async (req, res) => {
         // 3. Build Dynamic WHERE Clauses
         // =========================================================
 
-        const whereClauses = [
-            Prisma.sql`p.deleted_at IS NULL`,
-        ];
+        const whereClauses = [Prisma.sql`p.deleted_at IS NULL`];
 
-        // ---------------------------------------------------------
-        // General Search
-        // Searches product name, short description and description
-        // ---------------------------------------------------------
-
+        // General search: product name, short description, description
         if (search) {
             const searchTerm = `%${search}%`;
 
             whereClauses.push(
-                Prisma.sql`
-          (
-            p.product_name ILIKE ${searchTerm}
-            OR p.short_description ILIKE ${searchTerm}
-            OR p.description ILIKE ${searchTerm}
-          )
-        `
+                Prisma.sql`(
+                    p.product_name ILIKE ${searchTerm}
+                    OR p.short_description ILIKE ${searchTerm}
+                    OR p.description ILIKE ${searchTerm}
+                )`
             );
         }
 
-        // ---------------------------------------------------------
-        // Product Name
-        // ---------------------------------------------------------
-
+        // Product name
         if (productName) {
             whereClauses.push(
-                Prisma.sql`
-          p.product_name ILIKE ${`%${productName}%`}
-        `
+                Prisma.sql`p.product_name ILIKE ${`%${productName}%`}`
             );
         }
 
-        // ---------------------------------------------------------
-        // Product Slug
-        // Example:
-        // ?slug=iphone-15-pro
-        // ---------------------------------------------------------
-
+        // Product slug  (?slug=iphone-15-pro)
         if (slug) {
-            whereClauses.push(
-                Prisma.sql`
-          p.url_slug = ${slug}
-        `
-            );
+            whereClauses.push(Prisma.sql`p.url_slug = ${slug}`);
         }
 
-        // ---------------------------------------------------------
         // Category ID
-        // ---------------------------------------------------------
-
         if (categoryId) {
             const parsedCategoryId = parseInt(categoryId, 10);
 
             if (!Number.isNaN(parsedCategoryId)) {
                 whereClauses.push(
-                    Prisma.sql`
-            p.category_id = ${parsedCategoryId}
-          `
+                    Prisma.sql`p.category_id = ${parsedCategoryId}`
                 );
             }
         }
 
-        // ---------------------------------------------------------
-        // Category Name
-        // Example:
-        // ?categoryName=Electronics
-        // ---------------------------------------------------------
+        // Category slug  (?categorySlug=watch)
+        if (categorySlug) {
+            whereClauses.push(
+                Prisma.sql`LOWER(c.url_slug) = LOWER(${categorySlug})`
+            );
 
+            // Optional: also include products from child categories.
+            // Replace the clause above with this one and change `parent_id`
+            // to your real parent column name.
+            //
+            // whereClauses.push(Prisma.sql`(
+            //     LOWER(c.url_slug) = LOWER(${categorySlug})
+            //     OR c.parent_id = (
+            //         SELECT id FROM categories
+            //         WHERE LOWER(url_slug) = LOWER(${categorySlug})
+            //           AND deleted_at IS NULL
+            //     )
+            // )`);
+        }
+
+        // Category name  (?categoryName=Electronics)
         if (categoryName) {
             whereClauses.push(
-                Prisma.sql`
-          c.category_name ILIKE ${`%${categoryName}%`}
-        `
+                Prisma.sql`c.category_name ILIKE ${`%${categoryName}%`}`
             );
         }
 
-        // ---------------------------------------------------------
         // Brand ID
-        // ---------------------------------------------------------
-
         if (brandId) {
             const parsedBrandId = parseInt(brandId, 10);
 
             if (!Number.isNaN(parsedBrandId)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.brand_id = ${parsedBrandId}
-          `
-                );
+                whereClauses.push(Prisma.sql`p.brand_id = ${parsedBrandId}`);
             }
         }
 
-        // ---------------------------------------------------------
-        // Minimum Price
-        // Example:
-        // ?minPrice=500
-        // ---------------------------------------------------------
-
+        // Minimum price  (?minPrice=500)
         if (minPrice !== undefined && minPrice !== "") {
             const parsedMinPrice = parseFloat(minPrice);
 
             if (!Number.isNaN(parsedMinPrice)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.price >= ${parsedMinPrice}
-          `
-                );
+                whereClauses.push(Prisma.sql`p.price >= ${parsedMinPrice}`);
             }
         }
 
-        // ---------------------------------------------------------
-        // Maximum Price
-        // Example:
-        // ?maxPrice=5000
-        // ---------------------------------------------------------
-
+        // Maximum price  (?maxPrice=5000)
         if (maxPrice !== undefined && maxPrice !== "") {
             const parsedMaxPrice = parseFloat(maxPrice);
 
             if (!Number.isNaN(parsedMaxPrice)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.price <= ${parsedMaxPrice}
-          `
-                );
+                whereClauses.push(Prisma.sql`p.price <= ${parsedMaxPrice}`);
             }
         }
 
-        // ---------------------------------------------------------
-        // In Stock
-        // ---------------------------------------------------------
-
+        // In stock
         if (inStock === "true") {
-            whereClauses.push(
-                Prisma.sql`
-          p.stock_quantity > 0
-        `
-            );
+            whereClauses.push(Prisma.sql`p.stock_quantity > 0`);
         }
 
         // Combine WHERE conditions
-        const whereSql = Prisma.sql`
-      WHERE ${Prisma.join(whereClauses, " AND ")}
-    `;
+        const whereSql = Prisma.sql`WHERE ${Prisma.join(
+            whereClauses,
+            " AND "
+        )}`;
 
         // =========================================================
-        // 4. Sorting
+        // 4. Sorting (id tiebreaker keeps pagination stable)
         // =========================================================
 
-        let orderBySql = Prisma.sql`
-      ORDER BY p.created_at DESC
-    `;
+        let orderBySql;
 
         switch (sortBy) {
-            case "newest":
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at DESC
-        `;
-                break;
-
             case "oldest":
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at ASC
-        `;
+                orderBySql = Prisma.sql`ORDER BY p.created_at ASC, p.id ASC`;
                 break;
 
             case "price_asc":
-                orderBySql = Prisma.sql`
-          ORDER BY p.price ASC
-        `;
+                orderBySql = Prisma.sql`ORDER BY p.price ASC, p.id ASC`;
                 break;
 
             case "price_desc":
-                orderBySql = Prisma.sql`
-          ORDER BY p.price DESC
-        `;
+                orderBySql = Prisma.sql`ORDER BY p.price DESC, p.id DESC`;
                 break;
 
+            case "newest":
             default:
-                // Default = newest products first
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at DESC
-        `;
+                orderBySql = Prisma.sql`ORDER BY p.created_at DESC, p.id DESC`;
         }
 
         // =========================================================
@@ -560,125 +501,94 @@ const getAllProducts = async (req, res) => {
 
         const [countResult, products] = await Promise.all([
             prisma.$queryRaw`
-        SELECT COUNT(*)::int AS total
-        FROM products p
+                SELECT COUNT(*)::int AS total
+                FROM products p
 
-        LEFT JOIN categories c
-          ON c.id = p.category_id
-          AND c.deleted_at IS NULL
+                LEFT JOIN categories c
+                    ON c.id = p.category_id
+                    AND c.deleted_at IS NULL
 
-        ${whereSql}
-      `,
+                ${whereSql}
+            `,
 
             prisma.$queryRaw`
-        SELECT
-          p.id,
+                SELECT
+                    p.id,
+                    p.product_name        AS "productName",
+                    p.short_description   AS "shortDescription",
+                    p.description,
+                    p.price,
+                    p.stock_quantity      AS "stockQuantity",
+                    p.category_id         AS "categoryId",
+                    p.brand_id            AS "brandId",
+                    p.url_slug            AS "urlSlug",
+                    p.status,
+                    p.created_at          AS "createdAt",
+                    p.updated_at          AS "updatedAt",
 
-          p.product_name
-            AS "productName",
+                    -- Category information
+                    c.category_name       AS "categoryName",
+                    c.url_slug            AS "categorySlug",
 
-          p.short_description
-            AS "shortDescription",
+                    -- Brand information
+                    b.brand_name          AS "brandName",
+                    b.logo                AS "brandLogo",
 
-          p.description,
+                    -- Product variants
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(
+                                jsonb_build_object(
+                                    'id', v.id,
+                                    'stockQuantity', v.stock_quantity,
+                                    'price', v.price,
+                                    'colors', v.colors,
+                                    'sizes', v.sizes,
+                                    'images',
+                                    (
+                                        SELECT COALESCE(
+                                            jsonb_agg(
+                                                jsonb_build_object(
+                                                    'id', i.id,
+                                                    'imageUrl', i.image_url,
+                                                    'sortOrder', i.sort_order
+                                                )
+                                                ORDER BY i.sort_order ASC
+                                            ),
+                                            '[]'::jsonb
+                                        )
+                                        FROM variant_images i
+                                        WHERE
+                                            i.product_variant_id = v.id
+                                            AND i.deleted_at IS NULL
+                                    )
+                                )
+                                ORDER BY v.id DESC
+                            )
+                            FROM product_variants v
+                            WHERE
+                                v.product_id = p.id
+                                AND v.deleted_at IS NULL
+                        ),
+                        '[]'::jsonb
+                    ) AS variants
 
-          p.price,
+                FROM products p
 
-          p.stock_quantity
-            AS "stockQuantity",
+                LEFT JOIN categories c
+                    ON c.id = p.category_id
+                    AND c.deleted_at IS NULL
 
-          p.category_id
-            AS "categoryId",
+                LEFT JOIN brands b
+                    ON b.id = p.brand_id
 
-          p.brand_id
-            AS "brandId",
+                ${whereSql}
 
-          p.url_slug
-            AS "urlSlug",
+                ${orderBySql}
 
-          p.status,
-
-          p.created_at
-            AS "createdAt",
-
-          p.updated_at
-            AS "updatedAt",
-
-          -- Category Information
-          c.category_name
-            AS "categoryName",
-
-          c.url_slug
-            AS "categorySlug",
-
-          -- Brand Information
-          b.brand_name
-            AS "brandName",
-
-          b.logo
-            AS "brandLogo",
-
-          -- Product Variants
-          COALESCE(
-            (
-              SELECT jsonb_agg(
-                jsonb_build_object(
-                  'id', v.id,
-                  'stockQuantity', v.stock_quantity,
-                  'price', v.price,
-                  'colors', v.colors,
-                  'sizes', v.sizes,
-
-                  'images',
-                  (
-                    SELECT COALESCE(
-                      jsonb_agg(
-                        jsonb_build_object(
-                          'id', i.id,
-                          'imageUrl', i.image_url,
-                          'sortOrder', i.sort_order
-                        )
-                        ORDER BY i.sort_order ASC
-                      ),
-                      '[]'::jsonb
-                    )
-
-                    FROM variant_images i
-
-                    WHERE
-                      i.product_variant_id = v.id
-                      AND i.deleted_at IS NULL
-                  )
-                )
-
-                ORDER BY v.id DESC
-              )
-
-              FROM product_variants v
-
-              WHERE
-                v.product_id = p.id
-                AND v.deleted_at IS NULL
-            ),
-            '[]'::jsonb
-          ) AS variants
-
-        FROM products p
-
-        LEFT JOIN categories c
-          ON c.id = p.category_id
-          AND c.deleted_at IS NULL
-
-        LEFT JOIN brands b
-          ON b.id = p.brand_id
-
-        ${whereSql}
-
-        ${orderBySql}
-
-        OFFSET ${offset}
-        LIMIT ${limit}
-      `,
+                OFFSET ${offset}
+                LIMIT ${limit}
+            `,
         ]);
 
         // =========================================================
@@ -686,10 +596,7 @@ const getAllProducts = async (req, res) => {
         // =========================================================
 
         const totalProducts = countResult[0]?.total || 0;
-
-        const totalPages = Math.ceil(
-            totalProducts / limit
-        );
+        const totalPages = Math.ceil(totalProducts / limit);
 
         // =========================================================
         // 7. Format Products
@@ -713,6 +620,20 @@ const getAllProducts = async (req, res) => {
         // 9. Response Payload
         // =========================================================
 
+        const activeFilters = {
+            search,
+            productName,
+            slug,
+            categoryId,
+            categorySlug,
+            categoryName,
+            brandId,
+            minPrice,
+            maxPrice,
+            inStock,
+            sortBy,
+        };
+
         const responsePayload = {
             success: true,
 
@@ -725,43 +646,19 @@ const getAllProducts = async (req, res) => {
                 total_pages: totalPages,
                 current_page: page,
                 per_page: limit,
-
-                filters: {
-                    search,
-                    productName,
-                    slug,
-                    categoryId,
-                    categoryName,
-                    brandId,
-                    minPrice,
-                    maxPrice,
-                    inStock,
-                    sortBy,
-                },
+                filters: activeFilters,
             },
 
             all_products: serializedProducts,
 
             links:
                 typeof buildPaginationLinks === "function"
-                    ? buildPaginationLinks(
-                        "/api/v1/products",
-                        {
-                            page,
-                            limit,
-                            totalPages,
-                            search,
-                            productName,
-                            slug,
-                            categoryId,
-                            categoryName,
-                            brandId,
-                            minPrice,
-                            maxPrice,
-                            inStock,
-                            sortBy,
-                        }
-                    )
+                    ? buildPaginationLinks("/api/v1/products", {
+                          page,
+                          limit,
+                          totalPages,
+                          ...activeFilters,
+                      })
                     : null,
         };
 
@@ -770,22 +667,13 @@ const getAllProducts = async (req, res) => {
         // =========================================================
 
         try {
-            await redis.set(
-                cacheKey,
-                JSON.stringify(responsePayload),
-                {
-                    EX: PRODUCTS_CACHE_TTL,
-                }
-            );
+            await redis.set(cacheKey, JSON.stringify(responsePayload), {
+                EX: PRODUCTS_CACHE_TTL,
+            });
 
-            console.log(
-                `[Redis] Successfully cached: ${cacheKey}`
-            );
+            console.log(`[Redis] Successfully cached: ${cacheKey}`);
         } catch (redisErr) {
-            console.error(
-                "[Redis] SET failed:",
-                redisErr.message
-            );
+            console.error("[Redis] SET failed:", redisErr.message);
         }
 
         // =========================================================
@@ -793,18 +681,14 @@ const getAllProducts = async (req, res) => {
         // =========================================================
 
         return res.status(200).json(responsePayload);
-
     } catch (error) {
-        console.error(
-            "[Controller Error] getProductFilters failed:",
-            error
-        );
+        console.error("[Controller Error] getAllProducts failed:", error);
 
         if (typeof handleError === "function") {
             return handleError(
                 res,
                 error,
-                "Get Product Filters Error",
+                "Get All Products Error",
                 "Failed to retrieve filtered products."
             );
         }
@@ -813,7 +697,6 @@ const getAllProducts = async (req, res) => {
             success: false,
             message:
                 "An internal server error occurred while retrieving products.",
-
             error:
                 process.env.NODE_ENV === "development"
                     ? error.message
@@ -1484,7 +1367,7 @@ const generateCacheKey = (params) => {
 
 export {
     createProduct,
-    getAllProducts, 
+    getAllProducts,
     getProductById,
     getProductBySlug,
     updateProduct,

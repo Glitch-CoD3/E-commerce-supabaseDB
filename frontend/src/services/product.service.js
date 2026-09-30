@@ -45,21 +45,27 @@ export const createProduct = async (data) => {
 };
 
 // Get all Products API call
-export const getAllProducts = async (page = 1, perPage = 10) => {
+export const getAllProducts = async (query = {}) => {
+  // Drop empty values so the API never sees ?search=&minPrice=
+  const params = Object.fromEntries(
+    Object.entries(query).filter(
+      ([, value]) => value !== undefined && value !== null && value !== ""
+    )
+  );
 
-  const response = await AxiosInstance.get("/products/", {
-    params: {
-      page,
-      per_page: perPage,
-    },
-  });
+  const response = await AxiosInstance.get("/products/", { params });
   return response.data;
 };
 
-
 //Get Top Selling Products API call
-export const getTopSellingProducts = async (page= 1, perPage= 10) => {
-  const response = await AxiosInstance.get("/products/top-selling");
+export const getTopSellingProducts = async (query = {}) => {
+  const params = Object.fromEntries(
+    Object.entries(query).filter(
+      ([, value]) => value !== undefined && value !== null && value !== ""
+    )
+  );
+
+  const response = await AxiosInstance.get("/products/top-selling", { params });
   return response.data;
 };
 

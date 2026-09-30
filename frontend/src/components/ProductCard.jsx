@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { addToCart } from "../services/cart.service.js";
 import { useCart } from "@/services/cartContext.js";
 
-const ProductCard = ({ product }) => {
+const ProductCard = ({ product,  index = 0 }) => {
   // Ensure sizes and colors are valid non-null string arrays
   const availableSizes = useMemo(() => {
     const sizes = Array.isArray(product.sizes) ? product.sizes : [];
@@ -123,11 +123,10 @@ const ProductCard = ({ product }) => {
       >
         <Image
           src={productImage}
-          alt={product.name || "Product image"}
+          alt={product.name || product.productName || "Product image"}
           fill
-          sizes="(max-width: 640px) 100vw, 100vw"
-          quality={100}
-          priority
+          sizes="(min-width: 1536px) 25vw, (min-width: 1280px) 33vw, (min-width: 640px) 50vw, 100vw"
+          priority={index < 4}
           className="object-cover hover:scale-105 transition-transform duration-300"
         />
 
@@ -209,16 +208,14 @@ const ProductCard = ({ product }) => {
                           })
                         }
                         title={`${String(color).toUpperCase()} (${colorStock} in stock)`}
-                        className={`relative border-2 ${
-                          productTypes.color === color
+                        className={`relative border-2 ${productTypes.color === color
                             ? "border-gray-500"
                             : "border-gray-300"
-                        } rounded-full p-[1.2px] cursor-pointer`}
+                          } rounded-full p-[1.2px] cursor-pointer`}
                       >
                         <div
-                          className={`w-6 h-6 rounded-full ${
-                            isColorOutOfStock ? "opacity-30" : "opacity-100"
-                          }`}
+                          className={`w-6 h-6 rounded-full ${isColorOutOfStock ? "opacity-30" : "opacity-100"
+                            }`}
                           style={{ backgroundColor: color }}
                         />
 
@@ -258,11 +255,10 @@ const ProductCard = ({ product }) => {
           <button
             onClick={handleAddToCart}
             disabled={isSelectedVariantOutOfStock || isAdding}
-            className={`flex gap-2 items-center ring-1 ring-gray-200 shadow-lg rounded-md px-2 py-1 text-sm transition-all duration-300 ${
-              isSelectedVariantOutOfStock || isAdding
+            className={`flex gap-2 items-center ring-1 ring-gray-200 shadow-lg rounded-md px-2 py-1 text-sm transition-all duration-300 ${isSelectedVariantOutOfStock || isAdding
                 ? "bg-gray-200 text-gray-400 cursor-not-allowed ring-0 shadow-none"
                 : "cursor-pointer hover:text-white hover:bg-black"
-            }`}
+              }`}
           >
             {isAdding ? (
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -273,8 +269,8 @@ const ProductCard = ({ product }) => {
             {isSelectedVariantOutOfStock
               ? "Sold Out"
               : isAdding
-              ? "Adding..."
-              : "Add To Cart"}
+                ? "Adding..."
+                : "Add To Cart"}
           </button>
         </div>
       </div>

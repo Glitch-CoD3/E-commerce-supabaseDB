@@ -6,7 +6,14 @@ const Homepage = async ({ searchParams }) => {
   return (
     <div className="">
       <div className="relative aspect-3/1 mb-12">
-        <Image src="/featured.png" alt="Featured Product" fill />
+        <Image
+          src="/featured.png"
+          alt="Featured Product"
+          fill
+          priority
+          sizes="(min-width: 1280px) 1152px, 100vw"
+          className="object-cover"
+        />
       </div>
       <ProductList category={category} params="Homepage" />
     </div>
