@@ -10,7 +10,6 @@ import {
     deleteProduct,
     getProductsByCategoryId,
     getAllDeletedProducts,
-    getProductFilters
 } from "../controllers/products.controller.js";
 
 import { verifyJWT } from "../middlewares/auth.middleware.js";
@@ -32,18 +31,11 @@ const router = express.Router();
 
 /**
  * @method GET /api/v1/products
- * @description Get all products
+ * @description Get all products with optional filters (minPrice, maxPrice, category, etc.)
  * @access Public
  */
-router.get("/", getAllProducts);
+router.get("/", validateFilterQueryParams, getAllProducts);
 
-
-/**
- * @method GET /api/v1/products/filters
- * @description Get product filters (e.g., categories, brands, price ranges)
- * @access Public
- */
-router.get("/filters", validateFilterQueryParams, getProductFilters);
 
 
 

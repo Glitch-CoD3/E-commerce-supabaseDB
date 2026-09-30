@@ -292,32 +292,69 @@ const createProduct = async (req, res) => {
 //Raw sql Query For Read data
 const getAllProducts = async (req, res) => {
     try {
-        // Set HTTP Cache
+        // Browser / CDN cache
         res.set("Cache-Control", "public, max-age=60");
 
         const { page, limit, search, offset } = getPagination(req);
 
-        const cacheKey = `products:list:${JSON.stringify({
+        const {
+            categoryId,
+            brandId,
+
+            // Price filters
+            minPrice,
+            maxPrice,
+
+            // Other filters
+            inStock,
+            slug,
+            productName,
+            categoryName,
+
+            // Sorting
+            sortBy,
+        } = req.query;
+
+        // =========================================================
+        // 1. Generate Deterministic Redis Cache Key
+        // =========================================================
+
+        const cacheParams = {
             page,
             limit,
             search,
-        })}`;
+            categoryId,
+            brandId,
+            minPrice,
+            maxPrice,
+            inStock,
+            slug,
+            productName,
+            categoryName,
+            sortBy,
+        };
 
-        // 1. Try Redis Cache
+        const cacheKey = generateCacheKey(cacheParams);
+
+        // =========================================================
+        // 2. Try Redis Cache
+        // =========================================================
+
         try {
-            const cachedProducts = await redis.get(cacheKey);
+            const cachedData = await redis.get(cacheKey);
 
-            if (cachedProducts) {
+            if (cachedData) {
                 const parsed =
-                    typeof cachedProducts === "string"
-                        ? JSON.parse(cachedProducts)
-                        : cachedProducts;
+                    typeof cachedData === "string"
+                        ? JSON.parse(cachedData)
+                        : cachedData;
 
-                console.log(`products served from Redis (key: ${cacheKey})`);
+                console.log(`[Redis] Cache Hit: ${cacheKey}`);
+
                 return res.status(200).json(parsed);
             }
 
-            console.log(`Fetching products from database (key: ${cacheKey})`);
+            console.log(`[Redis] Cache Miss: ${cacheKey}`);
         } catch (redisErr) {
             console.error(
                 "[Redis] GET failed, falling back to database:",
@@ -325,161 +362,465 @@ const getAllProducts = async (req, res) => {
             );
         }
 
-        // 2. Query Database
-        const searchTerm = search ? `%${search}%` : null;
+        // =========================================================
+        // 3. Build Dynamic WHERE Clauses
+        // =========================================================
+
+        const whereClauses = [
+            Prisma.sql`p.deleted_at IS NULL`,
+        ];
+
+        // ---------------------------------------------------------
+        // General Search
+        // Searches product name, short description and description
+        // ---------------------------------------------------------
+
+        if (search) {
+            const searchTerm = `%${search}%`;
+
+            whereClauses.push(
+                Prisma.sql`
+          (
+            p.product_name ILIKE ${searchTerm}
+            OR p.short_description ILIKE ${searchTerm}
+            OR p.description ILIKE ${searchTerm}
+          )
+        `
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Product Name
+        // ---------------------------------------------------------
+
+        if (productName) {
+            whereClauses.push(
+                Prisma.sql`
+          p.product_name ILIKE ${`%${productName}%`}
+        `
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Product Slug
+        // Example:
+        // ?slug=iphone-15-pro
+        // ---------------------------------------------------------
+
+        if (slug) {
+            whereClauses.push(
+                Prisma.sql`
+          p.url_slug = ${slug}
+        `
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Category ID
+        // ---------------------------------------------------------
+
+        if (categoryId) {
+            const parsedCategoryId = parseInt(categoryId, 10);
+
+            if (!Number.isNaN(parsedCategoryId)) {
+                whereClauses.push(
+                    Prisma.sql`
+            p.category_id = ${parsedCategoryId}
+          `
+                );
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Category Name
+        // Example:
+        // ?categoryName=Electronics
+        // ---------------------------------------------------------
+
+        if (categoryName) {
+            whereClauses.push(
+                Prisma.sql`
+          c.category_name ILIKE ${`%${categoryName}%`}
+        `
+            );
+        }
+
+        // ---------------------------------------------------------
+        // Brand ID
+        // ---------------------------------------------------------
+
+        if (brandId) {
+            const parsedBrandId = parseInt(brandId, 10);
+
+            if (!Number.isNaN(parsedBrandId)) {
+                whereClauses.push(
+                    Prisma.sql`
+            p.brand_id = ${parsedBrandId}
+          `
+                );
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Minimum Price
+        // Example:
+        // ?minPrice=500
+        // ---------------------------------------------------------
+
+        if (minPrice !== undefined && minPrice !== "") {
+            const parsedMinPrice = parseFloat(minPrice);
+
+            if (!Number.isNaN(parsedMinPrice)) {
+                whereClauses.push(
+                    Prisma.sql`
+            p.price >= ${parsedMinPrice}
+          `
+                );
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Maximum Price
+        // Example:
+        // ?maxPrice=5000
+        // ---------------------------------------------------------
+
+        if (maxPrice !== undefined && maxPrice !== "") {
+            const parsedMaxPrice = parseFloat(maxPrice);
+
+            if (!Number.isNaN(parsedMaxPrice)) {
+                whereClauses.push(
+                    Prisma.sql`
+            p.price <= ${parsedMaxPrice}
+          `
+                );
+            }
+        }
+
+        // ---------------------------------------------------------
+        // In Stock
+        // ---------------------------------------------------------
+
+        if (inStock === "true") {
+            whereClauses.push(
+                Prisma.sql`
+          p.stock_quantity > 0
+        `
+            );
+        }
+
+        // Combine WHERE conditions
+        const whereSql = Prisma.sql`
+      WHERE ${Prisma.join(whereClauses, " AND ")}
+    `;
+
+        // =========================================================
+        // 4. Sorting
+        // =========================================================
+
+        let orderBySql = Prisma.sql`
+      ORDER BY p.created_at DESC
+    `;
+
+        switch (sortBy) {
+            case "newest":
+                orderBySql = Prisma.sql`
+          ORDER BY p.created_at DESC
+        `;
+                break;
+
+            case "oldest":
+                orderBySql = Prisma.sql`
+          ORDER BY p.created_at ASC
+        `;
+                break;
+
+            case "price_asc":
+                orderBySql = Prisma.sql`
+          ORDER BY p.price ASC
+        `;
+                break;
+
+            case "price_desc":
+                orderBySql = Prisma.sql`
+          ORDER BY p.price DESC
+        `;
+                break;
+
+            default:
+                // Default = newest products first
+                orderBySql = Prisma.sql`
+          ORDER BY p.created_at DESC
+        `;
+        }
+
+        // =========================================================
+        // 5. Count + Product Query in Parallel
+        // =========================================================
 
         const [countResult, products] = await Promise.all([
-            // Query 1: Total Count
             prisma.$queryRaw`
         SELECT COUNT(*)::int AS total
         FROM products p
-        WHERE p.deleted_at IS NULL
-        ${searchTerm
-                    ? Prisma.sql`
-                AND (
-                    p.product_name ILIKE ${searchTerm}
-                    OR p.short_description ILIKE ${searchTerm}
-                    OR p.description ILIKE ${searchTerm}
-                )
-            `
-                    : Prisma.empty
-                }
+
+        LEFT JOIN categories c
+          ON c.id = p.category_id
+          AND c.deleted_at IS NULL
+
+        ${whereSql}
       `,
 
-            // Query 2: Product Records with joins and nested JSON variants
             prisma.$queryRaw`
         SELECT
-            p.id,
-            p.product_name         AS "productName",
-            p.short_description    AS "shortDescription",
-            p.description,
-            p.price,
-            p.stock_quantity       AS "stockQuantity",
-            p.category_id          AS "categoryId",
-            p.brand_id             AS "brandId",
-            p.url_slug             AS "urlSlug",
-            p.status,
+          p.id,
 
-            -- Direct Category Columns
-            c.category_name        AS "categoryName",
-            c.url_slug             AS "categorySlug",
+          p.product_name
+            AS "productName",
 
-            -- Direct Brand Columns
-            b.brand_name           AS "brandName",
-            b.logo                 AS "brandLogo",
+          p.short_description
+            AS "shortDescription",
 
-            -- Aggregated Variants with image relation
-            COALESCE(
-              (
-                SELECT jsonb_agg(
-                    jsonb_build_object(
-                        'id', v.id,
-                        'stockQuantity', v.stock_quantity,
-                        'price', v.price,
-                        'colors', v.colors,
-                        'sizes', v.sizes,
-                        'images', (
-                            SELECT COALESCE(jsonb_agg(
-                                jsonb_build_object(
-                                    'id', i.id,
-                                    'imageUrl', i.image_url,
-                                    'sortOrder', i.sort_order
-                                ) ORDER BY i.sort_order ASC
-                            ), '[]'::jsonb)
-                            FROM variant_images i
-                            WHERE i.product_variant_id = v.id AND i.deleted_at IS NULL
+          p.description,
+
+          p.price,
+
+          p.stock_quantity
+            AS "stockQuantity",
+
+          p.category_id
+            AS "categoryId",
+
+          p.brand_id
+            AS "brandId",
+
+          p.url_slug
+            AS "urlSlug",
+
+          p.status,
+
+          p.created_at
+            AS "createdAt",
+
+          p.updated_at
+            AS "updatedAt",
+
+          -- Category Information
+          c.category_name
+            AS "categoryName",
+
+          c.url_slug
+            AS "categorySlug",
+
+          -- Brand Information
+          b.brand_name
+            AS "brandName",
+
+          b.logo
+            AS "brandLogo",
+
+          -- Product Variants
+          COALESCE(
+            (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'id', v.id,
+                  'stockQuantity', v.stock_quantity,
+                  'price', v.price,
+                  'colors', v.colors,
+                  'sizes', v.sizes,
+
+                  'images',
+                  (
+                    SELECT COALESCE(
+                      jsonb_agg(
+                        jsonb_build_object(
+                          'id', i.id,
+                          'imageUrl', i.image_url,
+                          'sortOrder', i.sort_order
                         )
+                        ORDER BY i.sort_order ASC
+                      ),
+                      '[]'::jsonb
                     )
-                    ORDER BY v.id DESC
+
+                    FROM variant_images i
+
+                    WHERE
+                      i.product_variant_id = v.id
+                      AND i.deleted_at IS NULL
+                  )
                 )
-                FROM product_variants v
-                WHERE
-                    v.product_id = p.id
-                    AND v.deleted_at IS NULL
-              ),
-              '[]'::jsonb
-            ) AS variants
+
+                ORDER BY v.id DESC
+              )
+
+              FROM product_variants v
+
+              WHERE
+                v.product_id = p.id
+                AND v.deleted_at IS NULL
+            ),
+            '[]'::jsonb
+          ) AS variants
 
         FROM products p
 
         LEFT JOIN categories c
-            ON c.id = p.category_id AND c.deleted_at IS NULL
+          ON c.id = p.category_id
+          AND c.deleted_at IS NULL
 
         LEFT JOIN brands b
-            ON b.id = p.brand_id
+          ON b.id = p.brand_id
 
-        WHERE
-            p.deleted_at IS NULL
-            ${searchTerm
-                    ? Prisma.sql`
-                    AND (
-                        p.product_name ILIKE ${searchTerm}
-                        OR p.short_description ILIKE ${searchTerm}
-                        OR p.description ILIKE ${searchTerm}
-                    )
-                `
-                    : Prisma.empty
-                }
+        ${whereSql}
 
-        ORDER BY p.created_at DESC
+        ${orderBySql}
+
         OFFSET ${offset}
         LIMIT ${limit}
       `,
         ]);
 
-        const totalProducts = countResult[0]?.total || 0;
-        const totalPages = Math.ceil(totalProducts / limit);
+        // =========================================================
+        // 6. Pagination
+        // =========================================================
 
-        // Format products
-        const formattedProducts = products.map(formatListProduct);
+        const totalProducts = countResult[0]?.total || 0;
+
+        const totalPages = Math.ceil(
+            totalProducts / limit
+        );
+
+        // =========================================================
+        // 7. Format Products
+        // =========================================================
+
+        const formattedProducts =
+            typeof formatListProduct === "function"
+                ? products.map(formatListProduct)
+                : products;
+
+        // =========================================================
+        // 8. Serialize BigInt
+        // =========================================================
+
+        const serializedProducts =
+            typeof serializeBigInt === "function"
+                ? serializeBigInt(formattedProducts)
+                : formattedProducts;
+
+        // =========================================================
+        // 9. Response Payload
+        // =========================================================
 
         const responsePayload = {
             success: true,
-            message: formattedProducts.length
+
+            message: serializedProducts.length
                 ? "Products fetched successfully."
-                : "No products found.",
+                : "No products found matching the criteria.",
 
             meta: {
                 total_products: totalProducts,
                 total_pages: totalPages,
                 current_page: page,
                 per_page: limit,
-                search,
+
+                filters: {
+                    search,
+                    productName,
+                    slug,
+                    categoryId,
+                    categoryName,
+                    brandId,
+                    minPrice,
+                    maxPrice,
+                    inStock,
+                    sortBy,
+                },
             },
 
-            all_products: serializeBigInt(formattedProducts),
+            all_products: serializedProducts,
 
-            links: buildPaginationLinks("/api/v1/products", {
-                page,
-                limit,
-                totalPages,
-                search,
-            }),
+            links:
+                typeof buildPaginationLinks === "function"
+                    ? buildPaginationLinks(
+                        "/api/v1/products",
+                        {
+                            page,
+                            limit,
+                            totalPages,
+                            search,
+                            productName,
+                            slug,
+                            categoryId,
+                            categoryName,
+                            brandId,
+                            minPrice,
+                            maxPrice,
+                            inStock,
+                            sortBy,
+                        }
+                    )
+                    : null,
         };
 
-        // 3. Store Result in Redis Cache
+        // =========================================================
+        // 10. Store Response in Redis
+        // =========================================================
+
         try {
-            await redis.set(cacheKey, JSON.stringify(responsePayload), {
-                ex: PRODUCTS_CACHE_TTL,
-            });
+            await redis.set(
+                cacheKey,
+                JSON.stringify(responsePayload),
+                {
+                    EX: PRODUCTS_CACHE_TTL,
+                }
+            );
+
+            console.log(
+                `[Redis] Successfully cached: ${cacheKey}`
+            );
         } catch (redisErr) {
             console.error(
-                "[Redis] SET failed, response served without caching:",
+                "[Redis] SET failed:",
                 redisErr.message
             );
         }
 
+        // =========================================================
+        // 11. Send Response
+        // =========================================================
+
         return res.status(200).json(responsePayload);
+
     } catch (error) {
-        return handleError(
-            res,
-            error,
-            "Get All Products Error",
-            "Failed to retrieve products."
+        console.error(
+            "[Controller Error] getProductFilters failed:",
+            error
         );
+
+        if (typeof handleError === "function") {
+            return handleError(
+                res,
+                error,
+                "Get Product Filters Error",
+                "Failed to retrieve filtered products."
+            );
+        }
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "An internal server error occurred while retrieving products.",
+
+            error:
+                process.env.NODE_ENV === "development"
+                    ? error.message
+                    : undefined,
+        });
     }
 };
-
 
 
 /**
@@ -1137,545 +1478,13 @@ const generateCacheKey = (params) => {
 };
 
 
-const getProductFilters = async (req, res) => {
-    try {
-        // Browser / CDN cache
-        res.set("Cache-Control", "public, max-age=60");
-
-        const { page, limit, search, offset } = getPagination(req);
-
-        const {
-            categoryId,
-            brandId,
-
-            // Price filters
-            minPrice,
-            maxPrice,
-
-            // Other filters
-            inStock,
-            slug,
-            productName,
-            categoryName,
-
-            // Sorting
-            sortBy,
-        } = req.query;
-
-        // =========================================================
-        // 1. Generate Deterministic Redis Cache Key
-        // =========================================================
-
-        const cacheParams = {
-            page,
-            limit,
-            search,
-            categoryId,
-            brandId,
-            minPrice,
-            maxPrice,
-            inStock,
-            slug,
-            productName,
-            categoryName,
-            sortBy,
-        };
-
-        const cacheKey = generateCacheKey(cacheParams);
-
-        // =========================================================
-        // 2. Try Redis Cache
-        // =========================================================
-
-        try {
-            const cachedData = await redis.get(cacheKey);
-
-            if (cachedData) {
-                const parsed =
-                    typeof cachedData === "string"
-                        ? JSON.parse(cachedData)
-                        : cachedData;
-
-                console.log(`[Redis] Cache Hit: ${cacheKey}`);
-
-                return res.status(200).json(parsed);
-            }
-
-            console.log(`[Redis] Cache Miss: ${cacheKey}`);
-        } catch (redisErr) {
-            console.error(
-                "[Redis] GET failed, falling back to database:",
-                redisErr.message
-            );
-        }
-
-        // =========================================================
-        // 3. Build Dynamic WHERE Clauses
-        // =========================================================
-
-        const whereClauses = [
-            Prisma.sql`p.deleted_at IS NULL`,
-        ];
-
-        // ---------------------------------------------------------
-        // General Search
-        // Searches product name, short description and description
-        // ---------------------------------------------------------
-
-        if (search) {
-            const searchTerm = `%${search}%`;
-
-            whereClauses.push(
-                Prisma.sql`
-          (
-            p.product_name ILIKE ${searchTerm}
-            OR p.short_description ILIKE ${searchTerm}
-            OR p.description ILIKE ${searchTerm}
-          )
-        `
-            );
-        }
-
-        // ---------------------------------------------------------
-        // Product Name
-        // ---------------------------------------------------------
-
-        if (productName) {
-            whereClauses.push(
-                Prisma.sql`
-          p.product_name ILIKE ${`%${productName}%`}
-        `
-            );
-        }
-
-        // ---------------------------------------------------------
-        // Product Slug
-        // Example:
-        // ?slug=iphone-15-pro
-        // ---------------------------------------------------------
-
-        if (slug) {
-            whereClauses.push(
-                Prisma.sql`
-          p.url_slug = ${slug}
-        `
-            );
-        }
-
-        // ---------------------------------------------------------
-        // Category ID
-        // ---------------------------------------------------------
-
-        if (categoryId) {
-            const parsedCategoryId = parseInt(categoryId, 10);
-
-            if (!Number.isNaN(parsedCategoryId)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.category_id = ${parsedCategoryId}
-          `
-                );
-            }
-        }
-
-        // ---------------------------------------------------------
-        // Category Name
-        // Example:
-        // ?categoryName=Electronics
-        // ---------------------------------------------------------
-
-        if (categoryName) {
-            whereClauses.push(
-                Prisma.sql`
-          c.category_name ILIKE ${`%${categoryName}%`}
-        `
-            );
-        }
-
-        // ---------------------------------------------------------
-        // Brand ID
-        // ---------------------------------------------------------
-
-        if (brandId) {
-            const parsedBrandId = parseInt(brandId, 10);
-
-            if (!Number.isNaN(parsedBrandId)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.brand_id = ${parsedBrandId}
-          `
-                );
-            }
-        }
-
-        // ---------------------------------------------------------
-        // Minimum Price
-        // Example:
-        // ?minPrice=500
-        // ---------------------------------------------------------
-
-        if (minPrice !== undefined && minPrice !== "") {
-            const parsedMinPrice = parseFloat(minPrice);
-
-            if (!Number.isNaN(parsedMinPrice)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.price >= ${parsedMinPrice}
-          `
-                );
-            }
-        }
-
-        // ---------------------------------------------------------
-        // Maximum Price
-        // Example:
-        // ?maxPrice=5000
-        // ---------------------------------------------------------
-
-        if (maxPrice !== undefined && maxPrice !== "") {
-            const parsedMaxPrice = parseFloat(maxPrice);
-
-            if (!Number.isNaN(parsedMaxPrice)) {
-                whereClauses.push(
-                    Prisma.sql`
-            p.price <= ${parsedMaxPrice}
-          `
-                );
-            }
-        }
-
-        // ---------------------------------------------------------
-        // In Stock
-        // ---------------------------------------------------------
-
-        if (inStock === "true") {
-            whereClauses.push(
-                Prisma.sql`
-          p.stock_quantity > 0
-        `
-            );
-        }
-
-        // Combine WHERE conditions
-        const whereSql = Prisma.sql`
-      WHERE ${Prisma.join(whereClauses, " AND ")}
-    `;
-
-        // =========================================================
-        // 4. Sorting
-        // =========================================================
-
-        let orderBySql = Prisma.sql`
-      ORDER BY p.created_at DESC
-    `;
-
-        switch (sortBy) {
-            case "newest":
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at DESC
-        `;
-                break;
-
-            case "oldest":
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at ASC
-        `;
-                break;
-
-            case "price_asc":
-                orderBySql = Prisma.sql`
-          ORDER BY p.price ASC
-        `;
-                break;
-
-            case "price_desc":
-                orderBySql = Prisma.sql`
-          ORDER BY p.price DESC
-        `;
-                break;
-
-            default:
-                // Default = newest products first
-                orderBySql = Prisma.sql`
-          ORDER BY p.created_at DESC
-        `;
-        }
-
-        // =========================================================
-        // 5. Count + Product Query in Parallel
-        // =========================================================
-
-        const [countResult, products] = await Promise.all([
-            prisma.$queryRaw`
-        SELECT COUNT(*)::int AS total
-        FROM products p
-
-        LEFT JOIN categories c
-          ON c.id = p.category_id
-          AND c.deleted_at IS NULL
-
-        ${whereSql}
-      `,
-
-            prisma.$queryRaw`
-        SELECT
-          p.id,
-
-          p.product_name
-            AS "productName",
-
-          p.short_description
-            AS "shortDescription",
-
-          p.description,
-
-          p.price,
-
-          p.stock_quantity
-            AS "stockQuantity",
-
-          p.category_id
-            AS "categoryId",
-
-          p.brand_id
-            AS "brandId",
-
-          p.url_slug
-            AS "urlSlug",
-
-          p.status,
-
-          p.created_at
-            AS "createdAt",
-
-          p.updated_at
-            AS "updatedAt",
-
-          -- Category Information
-          c.category_name
-            AS "categoryName",
-
-          c.url_slug
-            AS "categorySlug",
-
-          -- Brand Information
-          b.brand_name
-            AS "brandName",
-
-          b.logo
-            AS "brandLogo",
-
-          -- Product Variants
-          COALESCE(
-            (
-              SELECT jsonb_agg(
-                jsonb_build_object(
-                  'id', v.id,
-                  'stockQuantity', v.stock_quantity,
-                  'price', v.price,
-                  'colors', v.colors,
-                  'sizes', v.sizes,
-
-                  'images',
-                  (
-                    SELECT COALESCE(
-                      jsonb_agg(
-                        jsonb_build_object(
-                          'id', i.id,
-                          'imageUrl', i.image_url,
-                          'sortOrder', i.sort_order
-                        )
-                        ORDER BY i.sort_order ASC
-                      ),
-                      '[]'::jsonb
-                    )
-
-                    FROM variant_images i
-
-                    WHERE
-                      i.product_variant_id = v.id
-                      AND i.deleted_at IS NULL
-                  )
-                )
-
-                ORDER BY v.id DESC
-              )
-
-              FROM product_variants v
-
-              WHERE
-                v.product_id = p.id
-                AND v.deleted_at IS NULL
-            ),
-            '[]'::jsonb
-          ) AS variants
-
-        FROM products p
-
-        LEFT JOIN categories c
-          ON c.id = p.category_id
-          AND c.deleted_at IS NULL
-
-        LEFT JOIN brands b
-          ON b.id = p.brand_id
-
-        ${whereSql}
-
-        ${orderBySql}
-
-        OFFSET ${offset}
-        LIMIT ${limit}
-      `,
-        ]);
-
-        // =========================================================
-        // 6. Pagination
-        // =========================================================
-
-        const totalProducts = countResult[0]?.total || 0;
-
-        const totalPages = Math.ceil(
-            totalProducts / limit
-        );
-
-        // =========================================================
-        // 7. Format Products
-        // =========================================================
-
-        const formattedProducts =
-            typeof formatListProduct === "function"
-                ? products.map(formatListProduct)
-                : products;
-
-        // =========================================================
-        // 8. Serialize BigInt
-        // =========================================================
-
-        const serializedProducts =
-            typeof serializeBigInt === "function"
-                ? serializeBigInt(formattedProducts)
-                : formattedProducts;
-
-        // =========================================================
-        // 9. Response Payload
-        // =========================================================
-
-        const responsePayload = {
-            success: true,
-
-            message: serializedProducts.length
-                ? "Products fetched successfully."
-                : "No products found matching the criteria.",
-
-            meta: {
-                total_products: totalProducts,
-                total_pages: totalPages,
-                current_page: page,
-                per_page: limit,
-
-                filters: {
-                    search,
-                    productName,
-                    slug,
-                    categoryId,
-                    categoryName,
-                    brandId,
-                    minPrice,
-                    maxPrice,
-                    inStock,
-                    sortBy,
-                },
-            },
-
-            all_products: serializedProducts,
-
-            links:
-                typeof buildPaginationLinks === "function"
-                    ? buildPaginationLinks(
-                        "/api/v1/products",
-                        {
-                            page,
-                            limit,
-                            totalPages,
-                            search,
-                            productName,
-                            slug,
-                            categoryId,
-                            categoryName,
-                            brandId,
-                            minPrice,
-                            maxPrice,
-                            inStock,
-                            sortBy,
-                        }
-                    )
-                    : null,
-        };
-
-        // =========================================================
-        // 10. Store Response in Redis
-        // =========================================================
-
-        try {
-            await redis.set(
-                cacheKey,
-                JSON.stringify(responsePayload),
-                {
-                    EX: PRODUCTS_CACHE_TTL,
-                }
-            );
-
-            console.log(
-                `[Redis] Successfully cached: ${cacheKey}`
-            );
-        } catch (redisErr) {
-            console.error(
-                "[Redis] SET failed:",
-                redisErr.message
-            );
-        }
-
-        // =========================================================
-        // 11. Send Response
-        // =========================================================
-
-        return res.status(200).json(responsePayload);
-
-    } catch (error) {
-        console.error(
-            "[Controller Error] getProductFilters failed:",
-            error
-        );
-
-        if (typeof handleError === "function") {
-            return handleError(
-                res,
-                error,
-                "Get Product Filters Error",
-                "Failed to retrieve filtered products."
-            );
-        }
-
-        return res.status(500).json({
-            success: false,
-            message:
-                "An internal server error occurred while retrieving products.",
-
-            error:
-                process.env.NODE_ENV === "development"
-                    ? error.message
-                    : undefined,
-        });
-    }
-};
-
 
 
 
 
 export {
     createProduct,
-    getAllProducts,
+    getAllProducts, 
     getProductById,
     getProductBySlug,
     updateProduct,
@@ -1683,5 +1492,5 @@ export {
     deleteProduct,
     getProductsByCategoryId,
     getAllDeletedProducts,
-    getProductFilters
+
 };
