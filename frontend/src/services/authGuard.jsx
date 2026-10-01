@@ -29,18 +29,21 @@ export default function RouteGuard({ children }) {
         }
     }, [loading, user, isAdmin, pathname, router]);
 
+    // Authentication state is still being determined
     if (loading) {
         return null;
     }
 
+    // Redirecting unauthenticated user
     if (!user) {
         return null;
     }
 
-    // Prevent non-admin from seeing dashboard
+    // Redirecting non-admin user
     if (pathname.startsWith("/dashboard") && !isAdmin) {
         return null;
     }
 
     return children;
 }
+
