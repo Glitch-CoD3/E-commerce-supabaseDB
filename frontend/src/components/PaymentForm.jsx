@@ -7,10 +7,12 @@ import {
   getShippingAddressByAddressId,
   getOrderByQueryId,
 } from "../services/order.service.js";
+import { useCart } from "../services/cartContext.js";
 
 const PaymentForm = () => {
   const searchParams = useSearchParams();
   const addressId = searchParams.get("addressId");
+  const { refreshCartCount } = useCart();
 
   const [addressDetails, setAddressDetails] = useState(null);
   const [loadingAddress, setLoadingAddress] = useState(false);
@@ -127,6 +129,8 @@ const PaymentForm = () => {
       // Fetch created order details
       const createdOrder = await getOrderByQueryId(fetchedOrderId);
       setCreateOrderResponse(createdOrder);
+      // Refresh cart count after successful order creation
+      refreshCartCount();
     } catch (error) {
       console.error("Payment Submission Error:", error);
       const message =

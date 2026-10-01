@@ -20,14 +20,6 @@ import { validateFilterQueryParams } from "../utils/validateFilterQueryParams.js
 
 const router = express.Router();
 
-// =======================
-// Authenticated User Routes
-// =======================
-
-/**
- * @middleware verifyJWT
- * @description All routes below require an authenticated user.
- */
 
 /**
  * @method GET /api/v1/products
@@ -53,7 +45,7 @@ router.get("/category/:categoryId", getProductsByCategoryId);
  */
 router.get("/slug/:slug", getProductBySlug);
 
-router.use(verifyJWT)
+
 
 /**
  * @method GET /api/v1/products/deleted
@@ -61,7 +53,7 @@ router.use(verifyJWT)
  * @access Private (Admin)
  */
 router.get(
-    "/deleted",
+    "/deleted", verifyJWT,
     allowRoles(ROLES.ADMIN),
     getAllDeletedProducts
 );
@@ -83,7 +75,7 @@ router.get("/:id", getProductById);
  * @description All routes below are accessible only by administrators.
  */
 router.use(allowRoles(ROLES.ADMIN));
-
+router.use(verifyJWT);
 /**
  * @method POST /api/v1/products
  * @description Create a new product
