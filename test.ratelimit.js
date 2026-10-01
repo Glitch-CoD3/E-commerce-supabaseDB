@@ -16,4 +16,4 @@ async function send(i) {
 }
 
 // Fire 10 requests at the same time
-Promise.all(Array.from({ length: 5 }, (_, i) => send(i + 1)));
+Promise.all(Array.from({ length: 10 }, (_, i) => send(i + 1)));

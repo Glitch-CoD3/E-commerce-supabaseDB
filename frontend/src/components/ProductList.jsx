@@ -47,6 +47,7 @@ const ProductList = ({ category, params }) => {
       setError("");
       try {
         const response = await getAllProducts(query);
+        console.log("Fetched products:", response);
         if (cancelled) return;
         setProducts(response.all_products ?? []);
         setMeta(response.meta ?? null);

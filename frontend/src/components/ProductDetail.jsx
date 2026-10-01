@@ -94,6 +94,7 @@ const buildImages = (images) => {
 /* ------------------------------------------------------------------ */
 
 const ProductDetail = ({ product, onAddToCart }) => {
+  console.log(product)
   const variants = useMemo(() => buildVariants(product), [product]);
   const images = useMemo(() => buildImages(product?.images), [product]);
 
@@ -130,7 +131,7 @@ const ProductDetail = ({ product, onAddToCart }) => {
   const stock = selectedVariant
     ? selectedVariant.stock
     : variants.length === 0
-    ? Number(product?.stock_quantity ?? 0)
+    ? Number(product?.quantity ?? 0)
     : 0;
   const price = selectedVariant?.price ?? product?.price ?? 0;
   const isOutOfStock = stock <= 0;
@@ -162,7 +163,7 @@ const ProductDetail = ({ product, onAddToCart }) => {
     try {
       await onAddToCart({
         productId: product.id,
-        variantId: product.variant_ids ?? null,
+        variantId: product.variant_ids || product.id,
       });
       toast.success("Added to cart successfully!");
     } catch (error) {

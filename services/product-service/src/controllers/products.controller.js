@@ -2,10 +2,12 @@ import slugify from "slugify";
 import { Prisma } from '@prisma/client'
 import prisma from "../config/prisma.js";
 import { redis } from "../config/redis.config.js";
+import { PRODUCTS_CACHE_TTL } from "../constants.js"
+import { generateProductListCacheKey as generateCacheKey } from "../utils/productHashCrypto.js";
 /* -------------------------------------------------------------------------- */
 /*                                   Helpers                                  */
 /* -------------------------------------------------------------------------- */
-const PRODUCTS_CACHE_TTL = 10; // 3 minutes, in seconds
+
 const PRISMA_ERRORS = {
     P2002: [409, "A record with this unique value already exists."],
     P2003: [400, "A related record referenced in the request does not exist."],
@@ -302,19 +304,14 @@ const getAllProducts = async (req, res) => {
             categorySlug,
             categoryName,
             brandId,
-
-            // Price filters
             minPrice,
             maxPrice,
-
-            // Other filters
             inStock,
             slug,
             productName,
-
-            // Sorting
             sortBy,
         } = req.query;
+
 
         // =========================================================
         // 1. Generate Deterministic Redis Cache Key
@@ -339,7 +336,7 @@ const getAllProducts = async (req, res) => {
         const cacheKey = generateCacheKey(cacheParams);
 
         // =========================================================
-        // 2. Try Redis Cache
+        // 2. Redis get cached response if available
         // =========================================================
 
         try {
@@ -351,16 +348,16 @@ const getAllProducts = async (req, res) => {
                         ? JSON.parse(cachedData)
                         : cachedData;
 
-                console.log(`[Redis] Cache Hit: ${cacheKey}`);
+                console.log(`[Redis] HIT ${cacheKey}`);
 
                 return res.status(200).json(parsed);
             }
 
-            console.log(`[Redis] Cache Miss: ${cacheKey}`);
-        } catch (redisErr) {
+            console.log(`[Redis] MISS ${cacheKey}`);
+        } catch (redisError) {
+            // Redis failure must NOT break product API
             console.error(
-                "[Redis] GET failed, falling back to database:",
-                redisErr.message
+                `[Redis] GET failed: ${redisError.message}`
             );
         }
 
@@ -654,11 +651,11 @@ const getAllProducts = async (req, res) => {
             links:
                 typeof buildPaginationLinks === "function"
                     ? buildPaginationLinks("/api/v1/products", {
-                          page,
-                          limit,
-                          totalPages,
-                          ...activeFilters,
-                      })
+                        page,
+                        limit,
+                        totalPages,
+                        ...activeFilters,
+                    })
                     : null,
         };
 
@@ -667,13 +664,17 @@ const getAllProducts = async (req, res) => {
         // =========================================================
 
         try {
-            await redis.set(cacheKey, JSON.stringify(responsePayload), {
-                EX: PRODUCTS_CACHE_TTL,
-            });
+            await redis.set(cacheKey, JSON.stringify(responsePayload),
+                {
+                    ex: PRODUCTS_CACHE_TTL.LIST,
+                }
+            );
 
-            console.log(`[Redis] Successfully cached: ${cacheKey}`);
-        } catch (redisErr) {
-            console.error("[Redis] SET failed:", redisErr.message);
+            console.log(`[Redis] SET ${cacheKey}`);
+        } catch (redisError) {
+            console.error(
+                `[Redis] SET failed: ${redisError.message}`
+            );
         }
 
         // =========================================================
@@ -712,46 +713,6 @@ const getAllProducts = async (req, res) => {
  * @access Public
  */
 
-/**
- * Scans Redis for cached products:list:* pages and returns the matching
- * product from `all_products` if found in any of them, else null.
- */
-const findProductInListCache = async (productId) => {
-    let cursor = "0";
-
-    do {
-        const scanResult = await redis.scan(cursor, { match: "products:list:*", count: 100 });
-
-        // Normalize across client shapes: node-redis v4 -> {cursor, keys}
-        // Upstash -> {cursor, keys} (cursor may be number)
-        // ioredis -> [cursor, keys]
-        let nextCursor, keys;
-
-        if (Array.isArray(scanResult)) {
-            [nextCursor, keys] = scanResult;
-        } else {
-            nextCursor = scanResult.cursor;
-            keys = scanResult.keys;
-        }
-
-        keys = keys ?? [];
-
-        for (const key of keys) {
-            const cached = await redis.get(key);
-            if (!cached) continue;
-
-            const parsed = typeof cached === "string" ? JSON.parse(cached) : cached;
-            const list = parsed.all_products ?? [];
-
-            const found = list.find((p) => String(p.id) === String(productId));
-            if (found) return found;
-        }
-
-        cursor = String(nextCursor);
-    } while (cursor !== "0");
-
-    return null;
-};
 
 const getProductById = async (req, res) => {
     try {
@@ -766,36 +727,41 @@ const getProductById = async (req, res) => {
         }
 
         // =========================================================
-        // 1. Scan cached products:list:* pages for this product
+        // 1. Generate Redis cache key
         // =========================================================
+
+        const cacheKey = `products:item:${productId}`;
+
+        // =========================================================
+        // 2. Try Redis cache
+        // =========================================================
+
         try {
-            const found = await findProductInListCache(productId);
+            const cachedProduct = await redis.get(cacheKey);
 
-            if (found) {
-                console.log(`Product found inside a cached products:list page`);
+            if (cachedProduct) {
+                const parsedProduct =
+                    typeof cachedProduct === "string"
+                        ? JSON.parse(cachedProduct)
+                        : cachedProduct;
 
-                return res.status(200).json({
-                    success: true,
-                    message: "Product retrieved successfully.",
-                    product: found,
-                    links: {
-                        self: `/api/v1/products/${id}`,
-                        bySlug: `/api/v1/products/slug/${found.url_slug ?? found.urlSlug}`,
-                        category: `/api/v1/categories/${found.category_id ?? found.categoryId}`,
-                        update: `/api/v1/products/${id}`,
-                        updateStatus: `/api/v1/products/${id}/status`,
-                        delete: `/api/v1/products/${id}`,
-                        allProducts: "/api/v1/products"
-                    }
-                });
+                console.log(`[Redis] Product Cache HIT: ${cacheKey}`);
+
+                return res.status(200).json(parsedProduct);
             }
+
+            console.log(`[Redis] Product Cache MISS: ${cacheKey}`);
         } catch (redisErr) {
-            console.error("[Redis] list-cache scan failed, falling back to database:", redisErr.message);
+            // Redis failure should NOT break the API.
+            console.error(
+                `[Redis] Product GET failed: ${redisErr.message}`
+            );
         }
 
         // =========================================================
-        // 2. Raw SQL query (single round trip)
+        // 3. Cache MISS → Query PostgreSQL
         // =========================================================
+
         const rows = await prisma.$queryRaw`
             SELECT
                 p.id,
@@ -804,14 +770,14 @@ const getProductById = async (req, res) => {
                 p.description,
                 p.price,
                 p.category_id          AS category_id,
-                p.url_slug              AS url_slug,
+                p.url_slug             AS url_slug,
 
                 c.category_name        AS category_name,
-                c.url_slug              AS category_slug,
+                c.url_slug             AS category_slug,
 
-                b.id                    AS brand_id,
-                b.brand_name            AS brand_name,
-                b.logo                  AS brand_logo,
+                b.id                   AS brand_id,
+                b.brand_name           AS brand_name,
+                b.logo                 AS brand_logo,
 
                 COALESCE(
                     json_agg(
@@ -821,15 +787,21 @@ const getProductById = async (req, res) => {
                             'colors', v.colors,
                             'stockQuantity', v.stock_quantity,
                             'images', (
-                                SELECT COALESCE(json_agg(
-                                    json_build_object(
-                                        'id', i.id,
-                                        'imageUrl', i.image_url,
-                                        'sortOrder', i.sort_order
-                                    ) ORDER BY i.sort_order ASC
-                                ), '[]'::json)
+                                SELECT COALESCE(
+                                    json_agg(
+                                        json_build_object(
+                                            'id', i.id,
+                                            'imageUrl', i.image_url,
+                                            'sortOrder', i.sort_order
+                                        )
+                                        ORDER BY i.sort_order ASC
+                                    ),
+                                    '[]'::json
+                                )
                                 FROM variant_images i
-                                WHERE i.product_variant_id = v.id AND i.deleted_at IS NULL
+                                WHERE
+                                    i.product_variant_id = v.id
+                                    AND i.deleted_at IS NULL
                             )
                         )
                     ) FILTER (WHERE v.id IS NOT NULL),
@@ -837,17 +809,32 @@ const getProductById = async (req, res) => {
                 ) AS variants
 
             FROM products p
-            LEFT JOIN categories c        ON c.id = p.category_id
-            LEFT JOIN brands b            ON b.id = p.brand_id
-            LEFT JOIN product_variants v  ON v.product_id = p.id AND v.deleted_at IS NULL
 
-            WHERE p.id = ${productId} AND p.deleted_at IS NULL
+            LEFT JOIN categories c
+                ON c.id = p.category_id
+                AND c.deleted_at IS NULL
+
+            LEFT JOIN brands b
+                ON b.id = p.brand_id
+
+            LEFT JOIN product_variants v
+                ON v.product_id = p.id
+                AND v.deleted_at IS NULL
+
+            WHERE
+                p.id = ${productId}
+                AND p.deleted_at IS NULL
 
             GROUP BY p.id, c.id, b.id
+
             LIMIT 1
         `;
 
         const result = rows[0] ?? null;
+
+        // =========================================================
+        // 4. Product not found
+        // =========================================================
 
         if (!result) {
             return res.status(404).json({
@@ -855,6 +842,10 @@ const getProductById = async (req, res) => {
                 message: "Product not found."
             });
         }
+
+        // =========================================================
+        // 5. Format product
+        // =========================================================
 
         const variants = result.variants ?? [];
 
@@ -864,44 +855,119 @@ const getProductById = async (req, res) => {
             shortDescription: result.short_description,
             description: result.description,
             price: result.price,
+
             category_id: result.category_id,
             url_slug: result.url_slug,
+
             category_name: result.category_name ?? null,
             category_slug: result.category_slug ?? null,
+
             brand_id: result.brand_id ?? null,
             brand_name: result.brand_name ?? null,
             brand_logo: result.brand_logo ?? null,
-            quantity: variants.reduce((total, { stockQuantity }) => total + stockQuantity, 0),
-            sizes: unique(variants.map(({ sizes }) => sizes)),
-            colors: unique(variants.map(({ colors }) => colors)),
+
+            quantity: variants.reduce(
+                (total, { stockQuantity }) =>
+                    total + stockQuantity,
+                0
+            ),
+
+            sizes: unique(
+                variants.map(({ sizes }) => sizes)
+            ),
+
+            colors: unique(
+                variants.map(({ colors }) => colors)
+            ),
+
             images: buildImagesByColor(variants)
         };
 
-        return res.status(200).json({
+        // =========================================================
+        // 6. Serialize BigInt
+        // =========================================================
+
+        const serializedProduct = serializeBigInt(product);
+
+        // =========================================================
+        // 7. Build response
+        // =========================================================
+
+        const responsePayload = {
             success: true,
             message: "Product retrieved successfully.",
-            product: serializeBigInt(product),
+
+            product: serializedProduct,
+
             links: {
                 self: `/api/v1/products/${id}`,
-                bySlug: `/api/v1/products/slug/${product.url_slug}`,
-                category: `/api/v1/categories/${product.category_id}`,
-                update: `/api/v1/products/${id}`,
-                updateStatus: `/api/v1/products/${id}/status`,
-                delete: `/api/v1/products/${id}`,
-                allProducts: "/api/v1/products"
+
+                bySlug:
+                    `/api/v1/products/slug/${serializedProduct.url_slug}`,
+
+                category:
+                    `/api/v1/categories/${serializedProduct.category_id}`,
+
+                update:
+                    `/api/v1/products/${id}`,
+
+                updateStatus:
+                    `/api/v1/products/${id}/status`,
+
+                delete:
+                    `/api/v1/products/${id}`,
+
+                allProducts:
+                    "/api/v1/products"
             }
-        });
+        };
+
+        // =========================================================
+        // 8. Store individual product in Redis
+        // =========================================================
+
+        try {
+            await redis.set(
+                cacheKey,
+                JSON.stringify(responsePayload),
+                {
+                    ex: PRODUCTS_CACHE_TTL.PRODUCT
+                }
+            );
+
+            console.log(
+                `[Redis] Product Cache SET: ${cacheKey}`
+            );
+        } catch (redisErr) {
+            // Redis failure should NOT break the API.
+            console.error(
+                `[Redis] Product SET failed: ${redisErr.message}`
+            );
+        }
+
+        // =========================================================
+        // 9. Return response
+        // =========================================================
+
+        return res.status(200).json(responsePayload);
 
     } catch (error) {
-        return handleError(res, error, "Get Product By ID Error", "Failed to retrieve product.");
+        return handleError(
+            res,
+            error,
+            "Get Product By ID Error",
+            "Failed to retrieve product."
+        );
     }
 };
+
 
 /**
  * @method GET /api/v1/products/slug/:slug
  * @description Retrieve a product by its URL slug
  * @access Public
  */
+
 const getProductBySlug = async (req, res) => {
     try {
         const { slug } = req.params;
@@ -913,10 +979,59 @@ const getProductBySlug = async (req, res) => {
             });
         }
 
+        // =========================================================
+        // 1. Generate Redis cache key
+        // =========================================================
+
+        const cacheKey = `products:slug:${slug}`;
+
+        // =========================================================
+        // 2. Try Redis cache
+        // =========================================================
+
+        try {
+            const cachedProduct = await redis.get(cacheKey);
+
+            if (cachedProduct) {
+                const parsedProduct =
+                    typeof cachedProduct === "string"
+                        ? JSON.parse(cachedProduct)
+                        : cachedProduct;
+
+                console.log(
+                    `[Redis] Product Slug Cache HIT: ${cacheKey}`
+                );
+
+                return res.status(200).json(parsedProduct);
+            }
+
+            console.log(
+                `[Redis] Product Slug Cache MISS: ${cacheKey}`
+            );
+        } catch (redisErr) {
+            // Redis failure should NOT break the API.
+            console.error(
+                `[Redis] Slug GET failed: ${redisErr.message}`
+            );
+        }
+
+        // =========================================================
+        // 3. Cache MISS → Database
+        // =========================================================
+
         const result = await prisma.product.findFirst({
-            where: { urlSlug: slug, deletedAt: null },
-            include: { category: categorySelect }
+            where: {
+                urlSlug: slug,
+                deletedAt: null
+            },
+            include: {
+                category: categorySelect
+            }
         });
+
+        // =========================================================
+        // 4. Product not found
+        // =========================================================
 
         if (!result) {
             return res.status(404).json({
@@ -925,26 +1040,87 @@ const getProductBySlug = async (req, res) => {
             });
         }
 
+        // =========================================================
+        // 5. Format product
+        // =========================================================
+
         const product = formatProduct(result);
 
-        return res.status(200).json({
+        const serializedProduct = serializeBigInt(product);
+
+        // =========================================================
+        // 6. Build response
+        // =========================================================
+
+        const responsePayload = {
             success: true,
+
             message: "Product retrieved successfully.",
-            product: serializeBigInt(product),
+
+            product: serializedProduct,
+
             links: {
                 self: `/api/v1/products/slug/${slug}`,
-                byId: `/api/v1/products/${product.id}`,
-                category: `/api/v1/categories/${product.category_id}`,
-                update: `/api/v1/products/${product.id}`,
-                updateStatus: `/api/v1/products/${product.id}/status`,
-                delete: `/api/v1/products/${product.id}`,
-                allProducts: "/api/v1/products"
+
+                byId:
+                    `/api/v1/products/${serializedProduct.id}`,
+
+                category:
+                    `/api/v1/categories/${serializedProduct.category_id}`,
+
+                update:
+                    `/api/v1/products/${serializedProduct.id}`,
+
+                updateStatus:
+                    `/api/v1/products/${serializedProduct.id}/status`,
+
+                delete:
+                    `/api/v1/products/${serializedProduct.id}`,
+
+                allProducts:
+                    "/api/v1/products"
             }
-        });
+        };
+
+        // =========================================================
+        // 7. Store in Redis
+        // =========================================================
+
+        try {
+            await redis.set(
+                cacheKey,
+                JSON.stringify(responsePayload),
+                {
+                    ex: PRODUCTS_CACHE_TTL.SLUG
+                }
+            );
+
+            console.log(
+                `[Redis] Product Slug Cache SET: ${cacheKey}`
+            );
+        } catch (redisErr) {
+            // Redis failure should NOT break the API.
+            console.error(
+                `[Redis] Slug SET failed: ${redisErr.message}`
+            );
+        }
+
+        // =========================================================
+        // 8. Return response
+        // =========================================================
+
+        return res.status(200).json(responsePayload);
+
     } catch (error) {
-        return handleError(res, error, "Get Product By Slug Error", "Failed to retrieve product.");
+        return handleError(
+            res,
+            error,
+            "Get Product By Slug Error",
+            "Failed to retrieve product."
+        );
     }
 };
+
 
 // Request field -> Prisma field (fields allowed for PATCH)
 const allowedFields = {
@@ -1343,25 +1519,6 @@ const getAllDeletedProducts = async (req, res) => {
         return handleError(res, error, "Get Deleted Products Error", "Failed to retrieve deleted products.");
     }
 };
-
-
-
-//generate cache helper
-const generateCacheKey = (params) => {
-    const sortedKeys = Object.keys(params).sort();
-    const sortedParams = {};
-
-    sortedKeys.forEach((key) => {
-        if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
-            sortedParams[key] = params[key];
-        }
-    });
-
-    return `products:list:${JSON.stringify(sortedParams)}`;
-};
-
-
-
 
 
 
