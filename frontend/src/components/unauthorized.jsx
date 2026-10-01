@@ -6,7 +6,7 @@ export const metadata = {
 
 export default function Unauthorized() {
     return (
-        <main className="grid min-h-screen place-items-center bg-slate-100 px-4 py-8 text-slate-900 sm:px-6">
+        <main className="grid min-h-screen place-items-center bg-white px-4 py-8 text-slate-900 sm:px-6">
             <section
                 aria-labelledby="unauth-title"
                 className="w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm md:max-w-lg"
