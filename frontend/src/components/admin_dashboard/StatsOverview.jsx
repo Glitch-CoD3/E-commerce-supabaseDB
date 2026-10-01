@@ -152,7 +152,7 @@ function LedgerRow({ stat, ratePercent }) {
   );
 }
 
-export default function StatsOverview() {
+export default function StatsOverviews() {
   const [stats, setStats] = useState({ hero: [], statuses: [], breakdown: [] });
   const [rates, setRates] = useState({});
   const [loading, setLoading] = useState(true);
@@ -176,6 +176,7 @@ export default function StatsOverview() {
         startDate: filters.startDate || undefined,
         endDate: filters.endDate || undefined,
       });
+      console.log('Admin dashboard response:', response);
 
       if (response && response.success) {
         const { overview, orderCounts, rates: apiRates, trends } = response.statistics;

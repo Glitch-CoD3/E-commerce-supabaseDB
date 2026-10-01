@@ -23,14 +23,14 @@ export default function Header({ theme, setTheme }) {
               className={`text-xl sm:text-2xl font-bold tracking-tight truncate ${isDark ? 'text-white' : 'text-slate-900'
                 }`}
             >
-              Enterprise Management Hub
+              TrendLama HUB
             </h1>
           </div>
           <p
             className={`text-xs sm:text-sm mt-0.5 font-medium leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-500'
               }`}
           >
-            Real-time ecommerce analytics and dynamic inventory control platform.
+            Old-Money Brand Admin Dashboard
           </p>
         </div>
       </div>

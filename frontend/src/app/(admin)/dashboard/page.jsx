@@ -12,18 +12,13 @@ import ProductTab from '../../../components/admin_dashboard/ProductTab.jsx';
 import PaidCustomerTab from '../../../components/admin_dashboard/PaidCustomerTab.jsx';
 import TopSellingTab from '../../../components/admin_dashboard/TopSellingTab.jsx';
 import OrderModal from '../../../components/admin_dashboard/OrderModal.jsx';
+import StatsOverviews from '../../../components/admin_dashboard/StatsOverview.jsx';
 
 import { getAllBrands, getAllProducts, getCategories } from '../../../services/product.service.js';
 
 function StatsOverview({ cardBg }) {
   return (
-    <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {['Products', 'Categories', 'Brands', 'Orders'].map(label => (
-        <div key={label} className={`${cardBg} rounded-2xl border p-5`}>
-          <p className="text-sm text-slate-400">Total {label}</p>
-        </div>
-      ))}
-    </section>
+    <StatsOverviews />
   );
 }
 
