@@ -763,72 +763,69 @@ const getProductById = async (req, res) => {
         // =========================================================
 
         const rows = await prisma.$queryRaw`
-            SELECT
-                p.id,
-                p.product_name         AS product_name,
-                p.short_description    AS short_description,
-                p.description,
-                p.price,
-                p.category_id          AS category_id,
-                p.url_slug             AS url_slug,
+    SELECT
+        p.id,
+        p.product_name         AS product_name,
+        p.short_description    AS short_description,
+        p.description,
+        p.price,
+        p.status               AS status,
+        p.category_id          AS category_id,
+        p.url_slug             AS url_slug,
 
-                c.category_name        AS category_name,
-                c.url_slug             AS category_slug,
+        c.category_name        AS category_name,
+        c.url_slug             AS category_slug,
 
-                b.id                   AS brand_id,
-                b.brand_name           AS brand_name,
-                b.logo                 AS brand_logo,
+        b.id                   AS brand_id,
+        b.brand_name           AS brand_name,
+        b.logo                 AS brand_logo,
 
-                COALESCE(
-                    json_agg(
-                        json_build_object(
-                            'id', v.id,
-                            'sizes', v.sizes,
-                            'colors', v.colors,
-                            'stockQuantity', v.stock_quantity,
-                            'images', (
-                                SELECT COALESCE(
-                                    json_agg(
-                                        json_build_object(
-                                            'id', i.id,
-                                            'imageUrl', i.image_url,
-                                            'sortOrder', i.sort_order
-                                        )
-                                        ORDER BY i.sort_order ASC
-                                    ),
-                                    '[]'::json
+        COALESCE(
+            json_agg(
+                json_build_object(
+                    'id', v.id,
+                    'sizes', v.sizes,
+                    'colors', v.colors,
+                    'price', v.price,
+                    'stockQuantity', v.stock_quantity,
+                    'images', (
+                        SELECT COALESCE(
+                            json_agg(
+                                json_build_object(
+                                    'id', i.id,
+                                    'imageUrl', i.image_url,
+                                    'sortOrder', i.sort_order
                                 )
-                                FROM variant_images i
-                                WHERE
-                                    i.product_variant_id = v.id
-                                    AND i.deleted_at IS NULL
-                            )
+                                ORDER BY i.sort_order ASC
+                            ),
+                            '[]'::json
                         )
-                    ) FILTER (WHERE v.id IS NOT NULL),
-                    '[]'::json
-                ) AS variants
+                        FROM variant_images i
+                        WHERE
+                            i.product_variant_id = v.id
+                            AND i.deleted_at IS NULL
+                    )
+                )
+                ORDER BY v.id DESC
+            ) FILTER (WHERE v.id IS NOT NULL),
+            '[]'::json
+        ) AS variants
 
-            FROM products p
-
-            LEFT JOIN categories c
-                ON c.id = p.category_id
-                AND c.deleted_at IS NULL
-
-            LEFT JOIN brands b
-                ON b.id = p.brand_id
-
-            LEFT JOIN product_variants v
-                ON v.product_id = p.id
-                AND v.deleted_at IS NULL
-
-            WHERE
-                p.id = ${productId}
-                AND p.deleted_at IS NULL
-
-            GROUP BY p.id, c.id, b.id
-
-            LIMIT 1
-        `;
+    FROM products p
+    LEFT JOIN categories c
+        ON c.id = p.category_id
+        AND c.deleted_at IS NULL
+    LEFT JOIN brands b
+        ON b.id = p.brand_id
+    LEFT JOIN product_variants v
+        ON v.product_id = p.id
+        AND v.deleted_at IS NULL
+    WHERE
+        p.id = ${productId}
+        AND p.deleted_at IS NULL
+    GROUP BY p.id, c.id, b.id
+    LIMIT 1
+`;
 
         const result = rows[0] ?? null;
 
@@ -850,37 +847,40 @@ const getProductById = async (req, res) => {
         const variants = result.variants ?? [];
 
         const product = {
-            id: result.id,
-            product_name: result.product_name,
-            shortDescription: result.short_description,
-            description: result.description,
-            price: result.price,
+            brand_id: result.brand_id ?? null,
+            brand_logo: result.brand_logo ?? null,
+            brand_name: result.brand_name ?? null,
 
             category_id: result.category_id,
-            url_slug: result.url_slug,
-
             category_name: result.category_name ?? null,
             category_slug: result.category_slug ?? null,
 
-            brand_id: result.brand_id ?? null,
-            brand_name: result.brand_name ?? null,
-            brand_logo: result.brand_logo ?? null,
+            colors: unique(variants.map(({ colors }) => colors)),
 
-            quantity: variants.reduce(
-                (total, { stockQuantity }) =>
-                    total + stockQuantity,
+            description: result.description,
+            id: result.id,
+
+            images: buildImagesByColor(variants),
+
+            name: result.product_name,
+            price: String(result.price),
+            shortDescription: result.short_description,
+
+            sizes: unique(variants.map(({ sizes }) => sizes)),
+
+            status: result.status,
+
+            stock_quantity: variants.reduce(
+                (total, { stockQuantity }) => total + Number(stockQuantity ?? 0),
                 0
             ),
 
-            sizes: unique(
-                variants.map(({ sizes }) => sizes)
-            ),
+            total_variants: variants.length,
+            url_slug: result.url_slug,
 
-            colors: unique(
-                variants.map(({ colors }) => colors)
-            ),
-
-            images: buildImagesByColor(variants)
+            variant_ids: variants.map(({ id }) => id),
+            variant_prices: variants.map(({ price }) => Number(price)),
+            variant_stocks: variants.map(({ stockQuantity }) => Number(stockQuantity))
         };
 
         // =========================================================

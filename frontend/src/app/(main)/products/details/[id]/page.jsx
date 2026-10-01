@@ -24,8 +24,8 @@ const ProductDetailsPage = ({ params }) => {
         const response = await getProductById(id);
         // console.log("Product response:", response);
 
-        
-        const item = response?.product ;
+
+        const item = response?.product;
 
         if (!cancelled) setProduct(item ?? null);
       } catch (err) {
@@ -55,13 +55,12 @@ const ProductDetailsPage = ({ params }) => {
   return (
     <ProductDetail
       product={product}
-      onAddToCart={async ({ productId, variantId }) => {
+      onAddToCart={async ({ productId, variantId, quantity }) => {
         const cartInput = {
           product_id: productId,
           product_variant_id: variantId ?? undefined,
-          quantity: 1,
+          quantity: quantity ?? 1,
         };
-
         await addToCart(cartInput);
         await refreshCartCount();
       }}

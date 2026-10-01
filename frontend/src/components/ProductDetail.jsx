@@ -45,6 +45,18 @@ const cleanImageSrc = (value) => {
 };
 
 const buildVariants = (product) => {
+  // Preferred: real variants array from the API
+  if (Array.isArray(product?.variants) && product.variants.length > 0) {
+    return product.variants.map((v) => ({
+      id: v.id,
+      size: v.size ?? null,
+      color: v.color ?? null,
+      price: v.price ?? product?.price ?? 0,
+      stock: Number(v.stock ?? 0),
+    }));
+  }
+
+  // Fallback: flat arrays (paired by index)
   const sizes = toArray(product?.sizes);
   const colors = toArray(product?.colors);
   const ids = toArray(product?.variant_ids);
@@ -87,54 +99,81 @@ const buildImages = (images) => {
   return [];
 };
 
-
-
 /* ------------------------------------------------------------------ */
 /* Component                                                          */
 /* ------------------------------------------------------------------ */
 
 const ProductDetail = ({ product, onAddToCart }) => {
-  console.log(product)
-  const variants = useMemo(() => buildVariants(product), [product]);
   const images = useMemo(() => buildImages(product?.images), [product]);
 
   const allSizes = useMemo(
-    () => unique(variants.map((v) => v.size).filter((s) => s !== null)),
-    [variants]
+    () => toArray(product?.sizes).filter((s) => s !== null && s !== undefined && s !== ""),
+    [product?.sizes]
   );
   const allColors = useMemo(
-    () => unique(variants.map((v) => v.color).filter((c) => c !== null)),
-    [variants]
+    () => toArray(product?.colors).filter((c) => c !== null && c !== undefined && c !== ""),
+    [product?.colors]
   );
 
-  const initialVariant = variants.find((v) => v.stock > 0) ?? variants[0];
+  const parseJsonArray = (data) => {
+    try {
+      if (typeof data === "string") return JSON.parse(data);
+      if (Array.isArray(data)) return data;
+      return [];
+    } catch {
+      return [];
+    }
+  };
 
-  const [size, setSize] = useState(initialVariant?.size ?? null);
-  const [color, setColor] = useState(initialVariant?.color ?? null);
+  const handleThumbnailClick = (img, index) => {
+    setActiveImage(index);
+    if (img.color && allColors.includes(img.color)) {
+      setColor(img.color); // this updates the variant id, price and stock
+    }
+  };
+
+  const variantIds = useMemo(() => parseJsonArray(product?.variant_ids), [product?.variant_ids]);
+  const prices = useMemo(() => parseJsonArray(product?.variant_prices).map(Number), [product?.variant_prices]);
+  const stocks = useMemo(() => parseJsonArray(product?.variant_stocks).map(Number), [product?.variant_stocks]);
+
+  const [size, setSize] = useState(allSizes[0] ?? null);
+  const [color, setColor] = useState(allColors[0] ?? null);
   const [quantity, setQuantity] = useState(1);
   const [activeImage, setActiveImage] = useState(0);
   const [isAdding, setIsAdding] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  
+  // Same index logic as your working component
+  const getVariantIndex = (selectedSize, selectedColor) => {
+    if (allSizes.length === 0 || allColors.length === 0) {
+      const colorIdx = allColors.indexOf(selectedColor);
+      const sizeIdx = allSizes.indexOf(selectedSize);
+      return colorIdx !== -1 ? colorIdx : sizeIdx !== -1 ? sizeIdx : 0;
+    }
 
-  const matches = (v, s, c) => (!s || v.size === s) && (!c || v.color === c);
+    const sizeIndex = allSizes.indexOf(selectedSize);
+    const colorIndex = allColors.indexOf(selectedColor);
+    if (sizeIndex === -1 || colorIndex === -1) return 0;
 
-  const selectedVariant = variants.find((v) => matches(v, size, color));
+    const calculatedIndex = sizeIndex * allColors.length + colorIndex;
+    return calculatedIndex < variantIds.length ? calculatedIndex : colorIndex;
+  };
 
-  const isColorAvailable = (c) =>
-    variants.some((v) => matches(v, size, c) && v.stock > 0);
-  const isSizeAvailable = (s) =>
-    variants.some((v) => matches(v, s, color) && v.stock > 0);
+  const currentVariantIndex = getVariantIndex(size, color);
+  const currentVariantId = variantIds[currentVariantIndex];
 
-  const stock = selectedVariant
-    ? selectedVariant.stock
-    : variants.length === 0
-    ? Number(product?.quantity ?? 0)
-    : 0;
-  const price = selectedVariant?.price ?? product?.price ?? 0;
+  const price = prices[currentVariantIndex] ?? Number(product?.price || 0);
+  const stock = stocks[currentVariantIndex] ?? Number(product?.quantity ?? 0);
   const isOutOfStock = stock <= 0;
+
+  // Used by the existing JSX for the crossed-out colors and sizes
+  const isColorAvailable = (c) => (stocks[getVariantIndex(size, c)] ?? 0) > 0;
+  const isSizeAvailable = (s) => (stocks[getVariantIndex(s, color)] ?? 0) > 0;
+
+  // Plain setters, so the JSX can use setColor / setSize or these
+  const handleSelectColor = (c) => setColor(c);
+  const handleSelectSize = (s) => setSize(s);
 
   useEffect(() => {
     const index = images.findIndex((img) => img.color === color);
@@ -143,7 +182,7 @@ const ProductDetail = ({ product, onAddToCart }) => {
 
   useEffect(() => {
     setQuantity(1);
-  }, [selectedVariant?.id]);
+  }, [currentVariantId]);
 
   useEffect(() => {
     if (stock > 0 && quantity > stock) setQuantity(stock);
@@ -163,7 +202,8 @@ const ProductDetail = ({ product, onAddToCart }) => {
     try {
       await onAddToCart({
         productId: product.id,
-        variantId: product.variant_ids || product.id,
+        variantId: currentVariantId ?? null, // a single id, like 12 or 11
+        quantity,
       });
       toast.success("Added to cart successfully!");
     } catch (error) {
@@ -192,8 +232,6 @@ const ProductDetail = ({ product, onAddToCart }) => {
     }
   };
 
- 
-
   if (!product) {
     return (
       <div className="flex min-h-[400px] flex-col items-center justify-center gap-4 text-center px-4">
@@ -220,7 +258,7 @@ const ProductDetail = ({ product, onAddToCart }) => {
     name: name,
     image: images.map((i) => i.url),
     description: product.description || product.shortDescription,
-    sku: selectedVariant?.id || product.id,
+    sku: currentVariantId || product.id,
     brand: brandName ? { "@type": "Brand", name: brandName } : undefined,
     offers: {
       "@type": "Offer",
@@ -292,13 +330,12 @@ const ProductDetail = ({ product, onAddToCart }) => {
                   <button
                     key={img.key}
                     type="button"
-                    onClick={() => setActiveImage(index)}
+                    onClick={() => handleThumbnailClick(img, index)}
                     aria-label={`View image ${index + 1}`}
-                    className={`relative h-16 w-16 sm:h-20 sm:w-20 flex-shrink-0 overflow-hidden rounded-xl border-2 transition-all duration-200 ${
-                      index === activeImage
-                        ? "border-slate-900 shadow-md ring-2 ring-slate-900/10"
-                        : "border-slate-200 opacity-70 hover:opacity-100"
-                    }`}
+                    className={`relative h-16 w-16 sm:h-20 sm:w-20 flex-shrink-0 overflow-hidden rounded-xl border-2 transition-all duration-200 ${index === activeImage
+                      ? "border-slate-900 shadow-md ring-2 ring-slate-900/10"
+                      : "border-slate-200 opacity-70 hover:opacity-100"
+                      }`}
                   >
                     <Image
                       src={img.url}
@@ -351,9 +388,8 @@ const ProductDetail = ({ product, onAddToCart }) => {
                   className="group rounded-full bg-white/90 p-2 sm:p-2.5 text-slate-700 shadow-sm backdrop-blur-md transition hover:bg-white hover:text-rose-500"
                 >
                   <Heart
-                    className={`h-4 w-4 sm:h-5 sm:w-5 transition-transform group-hover:scale-110 ${
-                      isWishlisted ? "fill-rose-500 text-rose-500" : ""
-                    }`}
+                    className={`h-4 w-4 sm:h-5 sm:w-5 transition-transform group-hover:scale-110 ${isWishlisted ? "fill-rose-500 text-rose-500" : ""
+                      }`}
                   />
                 </button>
                 <button
@@ -443,16 +479,14 @@ const ProductDetail = ({ product, onAddToCart }) => {
                         type="button"
                         onClick={() => setColor(c)}
                         aria-label={`Select color ${c}`}
-                        className={`group relative flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full transition-all ${
-                          isSelected
-                            ? "ring-2 ring-slate-900 ring-offset-2"
-                            : "hover:scale-105"
-                        }`}
+                        className={`group relative flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full transition-all ${isSelected
+                          ? "ring-2 ring-slate-900 ring-offset-2"
+                          : "hover:scale-105"
+                          }`}
                       >
                         <span
-                          className={`h-6 w-6 sm:h-7 sm:w-7 rounded-full border border-slate-200/60 shadow-inner ${
-                            !available ? "opacity-30" : ""
-                          }`}
+                          className={`h-6 w-6 sm:h-7 sm:w-7 rounded-full border border-slate-200/60 shadow-inner ${!available ? "opacity-30" : ""
+                            }`}
                           style={{ backgroundColor: c }}
                         />
                         {!available && (
@@ -485,11 +519,10 @@ const ProductDetail = ({ product, onAddToCart }) => {
                         key={s}
                         type="button"
                         onClick={() => setSize(s)}
-                        className={`flex items-center justify-center rounded-xl py-2 sm:py-2.5 text-xs sm:text-sm font-semibold transition-all ${
-                          isSelected
-                            ? "bg-slate-900 text-white shadow-md shadow-slate-900/10"
-                            : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
-                        } ${!available ? "line-through opacity-40" : ""}`}
+                        className={`flex items-center justify-center rounded-xl py-2 sm:py-2.5 text-xs sm:text-sm font-semibold transition-all ${isSelected
+                          ? "bg-slate-900 text-white shadow-md shadow-slate-900/10"
+                          : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"
+                          } ${!available ? "line-through opacity-40" : ""}`}
                       >
                         {s}
                       </button>
@@ -531,11 +564,10 @@ const ProductDetail = ({ product, onAddToCart }) => {
                   type="button"
                   onClick={handleAddToCart}
                   disabled={isOutOfStock || isAdding}
-                  className={`hidden sm:flex flex-1 items-center justify-center gap-2 rounded-xl py-3 px-6 text-sm font-bold shadow-lg transition-all duration-200 active:scale-[0.98] ${
-                    isOutOfStock || isAdding
-                      ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none"
-                      : "bg-slate-900 text-white shadow-slate-900/20 hover:bg-slate-800 hover:shadow-slate-900/30"
-                  }`}
+                  className={`hidden sm:flex flex-1 items-center justify-center gap-2 rounded-xl py-3 px-6 text-sm font-bold shadow-lg transition-all duration-200 active:scale-[0.98] ${isOutOfStock || isAdding
+                    ? "cursor-not-allowed bg-slate-200 text-slate-400 shadow-none"
+                    : "bg-slate-900 text-white shadow-slate-900/20 hover:bg-slate-800 hover:shadow-slate-900/30"
+                    }`}
                 >
                   {isAdding ? (
                     <Loader2 className="h-5 w-5 animate-spin" />
@@ -609,7 +641,7 @@ const ProductDetail = ({ product, onAddToCart }) => {
       </div>
 
       {/* ------------------------- Add Here User Query comment about product ------------------------- */}
-      
+
 
       {/* Floating Sticky CTA Bar for Mobile Only */}
       <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/95 p-3 sm:p-4 backdrop-blur-lg sm:hidden shadow-lg">
